@@ -1,0 +1,88 @@
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+#include <sstream>
+#include "astar_dwa.h"
+#include "common.h"
+#include "visualization.h"
+#include <tf/transform_broadcaster.h>
+
+void generateObstacles(std::vector<thz::Point32> &obstacles);
+
+int main(int argc, char **argv)
+{
+  ros::init(argc, argv, "talker");
+  ros::NodeHandle n;
+
+  static tf::TransformBroadcaster br;
+  tf::Transform transform;
+  transform.setOrigin( tf::Vector3(0.0,0.0,0.0) );
+  tf::Quaternion q;
+  q.setRPY(0, 0, 0);
+  transform.setRotation(q);
+  ros::Rate loop_rate(10);
+
+  AstarDwa astarDwa;
+  TebVisualization tebVisualization(n);
+
+  //generate path
+  thz::Path path;
+  thz::Point32 point(0.0, 0.0, 0.0);
+  thz::Path testPath;
+  for(int i=0; i<100; i++)
+  {
+    thz::Point32 pointTemp;
+    pointTemp.x = 0.1*i;
+    pointTemp.y = 0.0;
+    pointTemp.heading = 0.0;
+    testPath.points.push_back(pointTemp);
+  }
+
+  //generate obstacle
+  std::vector<thz::Point32> obstacles;
+  generateObstacles(obstacles);
+  astarDwa.obstacleUpdate(obstacles);
+
+
+  path = astarDwa.pathInterface(point, testPath, testPath);
+
+  while (ros::ok())
+  {
+
+    //publish tf 
+    br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "base_link", "map"));
+
+    //show the path and obstacles through RVIZ
+    tebVisualization.publishLocalPlanAndPoses(path.points);
+    tebVisualization.publishObstacles(astarDwa.m_obstacle->m_dilatedObstacles);
+
+    ros::spinOnce();
+    loop_rate.sleep();
+  }
+
+  return 0;
+}
+
+void generateObstacles(std::vector<thz::Point32> &obstacles)
+{
+  thz::Point32 point1(5.5, -1.0, 0.0);
+  thz::Point32 point2(5.5, -0.0, 0.0);
+  thz::Point32 point3(5.5, 1.0, 0.0);
+  thz::Point32 point4(4, -0.0, 0.0);
+  thz::Point32 point5(4, 0.0, 0.0);
+  thz::Point32 point6(4, 0.0, 0.0);
+  thz::Point32 point7(8.0, 1.0, 0.0);
+  thz::Point32 point8(8.0, 2.0, 0.0);
+  thz::Point32 point9(4.0, 2.0, 0.0);
+  // thz::Point32 point0(8.0, 4.0, 0.0);
+
+  obstacles.push_back(point1);
+  obstacles.push_back(point2);
+  obstacles.push_back(point3);
+  obstacles.push_back(point4);
+  obstacles.push_back(point5);
+  obstacles.push_back(point6);
+  // obstacles.push_back(point7);
+  // obstacles.push_back(point8);
+  // obstacles.push_back(point9);
+  // obstacles.push_back(point0);
+}
