@@ -1,0 +1,120 @@
+#include "functions.h"
+
+std::tuple<thz::Point32, thz::Point32> carModel(const thz::Point32& point, thz::Polygon &polygon, const AstarDwaConfig& config)
+{
+    polygon.points.clear();
+    thz::Point32 pt, ld, ru;
+    std::set<float> cmpx, cmpy;
+
+    float vyaw = point.heading + M_PI / 2.0;
+    float headCarLength  = config.vehicle.front_overhang;
+    float tailCarLength  = config.vehicle.back_overhang;
+    float halfWheelTrack = config.vehicle.half_wheeltrack;
+
+    pt.x = point.x + headCarLength * cos(point.heading) - halfWheelTrack * cos(vyaw);
+    pt.y = point.y + headCarLength * sin(point.heading) - halfWheelTrack * sin(vyaw);
+    cmpx.insert(pt.x);
+    cmpy.insert(pt.y);
+    polygon.points.push_back(pt);
+    pt.x = point.x + headCarLength * cos(point.heading) + halfWheelTrack * cos(vyaw);
+    pt.y = point.y + headCarLength * sin(point.heading) + halfWheelTrack * sin(vyaw);
+    cmpx.insert(pt.x);
+    cmpy.insert(pt.y);
+    polygon.points.push_back(pt);
+    pt.x = point.x - tailCarLength * cos(point.heading) + halfWheelTrack * cos(vyaw);
+    pt.y = point.y - tailCarLength * sin(point.heading) + halfWheelTrack * sin(vyaw);
+    cmpx.insert(pt.x);
+    cmpy.insert(pt.y);
+    polygon.points.push_back(pt);
+    pt.x = point.x - tailCarLength * cos(point.heading) - halfWheelTrack * cos(vyaw);
+    pt.y = point.y - tailCarLength * sin(point.heading) - halfWheelTrack * sin(vyaw);
+    cmpx.insert(pt.x);
+    cmpy.insert(pt.y);
+    polygon.points.push_back(pt);
+
+    ld.x = *(cmpx.begin());
+    ld.y = *(cmpy.begin());
+    ru.x = *(cmpx.rbegin());
+    ru.y = *(cmpy.rbegin());
+    auto rtn = std::forward_as_tuple(ld, ru);
+    return rtn;
+}
+
+bool IsInsideFootprint(const thz::Point32& point, thz::Polygon &bounding_polygon)
+{
+    int counter = 0;
+    int i;
+    double xinters;
+    thz::Point32 p1;
+    thz::Point32 p2;
+    int N = bounding_polygon.points.size();
+    p1 = bounding_polygon.points.at(0);
+    for (i = 1; i <= N; i++)
+    {
+        p2 = bounding_polygon.points.at(i % N);
+        if (point.y > std::min<float>(p1.y, p2.y))
+        {
+            if (point.y <= std::max<float>(p1.y, p2.y))
+            {
+                if (point.x <= std::max<float>(p1.x, p2.x))
+                {
+                    if (p1.y != p2.y)
+                    {
+                        xinters = (point.y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y) + p1.x;
+                        if (p1.x == p2.x || point.x <= xinters)
+                            counter++;
+                    }
+                }
+            }
+        }
+        p1 = p2;
+    }
+    if (counter % 2 == 0)
+        return false;
+    else
+        return true;
+}
+
+bool reachGoal(VehicleState curVehicleState, VehicleState goalVehicleState)
+{
+    float distance, theta;
+    float disttolerance = 0.6;
+    float yawtolerance  = 9.0;
+    distance = std::hypot(curVehicleState.x - goalVehicleState.x, curVehicleState.y - goalVehicleState.y);
+    if (distance > disttolerance)
+    {
+        return false;
+    }
+    theta = radianToDegree(fabs(curVehicleState.heading - goalVehicleState.heading));
+    if (theta > yawtolerance)
+    {
+        return false;
+    }
+    return true;
+}
+
+float radianToDegree(float radian)
+{
+    if (radian > 2 * M_PI)
+    {
+        radian -= 2 * M_PI;
+    }
+    else if (radian < 0.0)
+    {
+        radian += 2 * M_PI;
+    }
+    return radian * 180 / M_PI;
+}
+
+float degreeToRadian(float degree)
+{
+    if (degree > 360.0)
+    {
+        degree -= 360.0;
+    }
+    else if (degree < 0.0)
+    {
+        degree += 360.0;
+    }
+    return M_PI * degree / 180.0;
+}
