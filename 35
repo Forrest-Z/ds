@@ -1,0 +1,226 @@
+#pragma once
+
+#include <iostream>
+#include <memory>
+#include <vector>
+#include <cmath>
+#include <set>
+#include <boost/heap/priority_queue.hpp>
+#include <boost/heap/binomial_heap.hpp>
+#include <unordered_map> 
+#include <algorithm>
+#include <iterator>
+#include <tuple>
+#include <algorithm>
+#include <boost/thread.hpp>
+
+namespace thz
+{
+	
+struct Point32
+{
+	Point32()
+		:x(0.0), y(0.0), heading(0.0){}
+
+	Point32(float x_, float y_, float yaw_)
+		:x(x_), y(y_), heading(yaw_){}
+
+	float x;
+	float y;
+	float heading;
+    float velocity;
+};
+
+struct Polygon
+{
+	std::vector<Point32> points;
+};
+
+struct Path
+{
+	std::vector<Point32> points;
+};
+
+} //namespace thz
+
+struct VehicleState
+{
+    float x;
+    float y;
+    float heading;
+
+    float linearVelocity;
+    float angularVelocity;
+
+    bool operator== (const VehicleState &vehicleState)
+    {
+        bool flag = false;
+        flag = fabs(heading - vehicleState.heading) <= 1e-3               &&
+               fabs(x - vehicleState.x) <= 1e-3                           &&
+               fabs(y - vehicleState.y) <= 1e-3                           &&
+               fabs(linearVelocity - vehicleState.linearVelocity) <= 1e-3 &&
+               fabs(angularVelocity - vehicleState.angularVelocity) <= 1e-3;
+        return flag;
+    }
+
+    VehicleState& operator= (const VehicleState &vehicleState)
+    {
+        this->x = vehicleState.x;
+        this->y = vehicleState.y;
+        this->heading = vehicleState.heading;
+        this->angularVelocity = vehicleState.angularVelocity;
+        this->linearVelocity = vehicleState.linearVelocity;
+        
+        return *this;
+    }
+};
+
+class AstarDwaConfig
+{
+    struct Kinematic
+    {
+        float max_linear_velocity; // m/s
+        float max_angular_velocity; // rad/s        
+        float max_linear_acceleration; // m/s^2     
+        float maximum_acceleration; // m/s^3        
+        float maximum_decceleration; // m/s^3       
+        float max_angular_acceleration; //rad/s^2       
+        float min_turn_radius; // m     
+        float centrifugal_acceleration; // m/s^2, Multiply the gravitational acceleration
+    };  
+
+    struct Vehicle
+    {
+        /*Unit: metre*/
+        float length;
+        float width;
+        float half_wheeltrack;
+        float front_overhang;
+        float back_overhang;
+        float wheelbase;
+        float head_wheel;
+        float tail_wheel;
+
+        /*turnangle, Unit: degree*/
+        /*Left wheel steer angle*/
+        float inner_angle;
+        /*Right wheel steer angle*/
+        float outer_angle;
+        //>= 2.5 dm
+        float outer_safe_distance;
+        float inner_safe_distance;
+    };
+
+    struct Road
+    {
+        float road_widt_hmin;
+        float turn_radius_min;
+        float turn_radius_max;
+        float road_outer_radius;
+        float road_inner_radius;
+    };
+
+public:
+    Kinematic kinematic;
+    Vehicle   vehicle;
+    Road      road;
+};
+
+template <typename T, typename priority_t>
+struct PriorityNode
+{
+    typedef std::pair<T, priority_t> PQElement;
+
+    /**
+    * \brief The overload of the operator "()"
+    *
+    */
+    struct CompareNode
+    {
+        bool operator()(const PQElement lhs, const PQElement rhs) const
+        {
+            return (lhs.second > rhs.second);
+        }
+    };
+
+    //The default priorityqueue is big top element heap!!!
+    typedef boost::heap::priority_queue<PriorityNode> boostPriorityQueue;
+    typedef boost::heap::binomial_heap<PQElement, boost::heap::compare<CompareNode>> boostPriority;
+    typedef std::priority_queue<PQElement, std::vector<PQElement>, CompareNode> stdPriority;
+
+    boostPriority elements;
+    PQElement node;
+
+    PriorityNode() {}
+
+    PriorityNode(PQElement ref)
+        : node(ref) {}
+
+    PriorityNode(T a, priority_t b)
+    {
+        node.first = a;
+        node.second = b;
+    }
+
+    /**
+     * \brief The overload of the operator "<"
+     *
+     */
+    friend bool operator<(const PriorityNode lhs, const PriorityNode rhs)
+    {
+        return (lhs.node.second > rhs.node.second);
+    }
+};
+
+template <typename T>
+struct hash_key
+{
+    std::size_t operator()(const T &str) const
+    {
+        std::hash<float> hash_fn;
+        return std::size_t(hash_fn(str.x + str.y + str.heading));
+    }
+};
+
+template <typename T>
+struct hash_compare
+{
+    bool operator()(const T &lhs, const T &rhs) const
+    {
+        return (lhs.heading == rhs.heading) && (lhs.x == rhs.x) && (lhs.y == rhs.y);
+    }
+};
+
+template <typename T>
+class ObstacleTree
+{
+  public:
+    ObstacleTree() {}
+    ObstacleTree(T& ref)
+        : elem(ref) {}
+    ~ObstacleTree() {}
+
+    T elem;
+
+    // struct CompareLeaf_x
+    // {
+    //     bool operator()(const T& lhs, const T& rhs) const
+    //     {
+    //         return lhs.x < rhs.x;
+    //     }
+    // };
+    struct CompareLeaf_y
+    {
+        bool operator()(const T& lhs, const T& rhs) const
+        {
+            return lhs.y < rhs.y;
+        }
+    };
+
+    using ObstaclesWithSameX = std::multiset<T, CompareLeaf_y>;
+    // using ObstaclesWithSameY = std::multiset<T, CompareLeaf_x>;
+};
+
+template <typename Val>
+using UnorderedMap       = std::unordered_map<VehicleState, Val, hash_key<VehicleState>, hash_compare<VehicleState>>;
+using SortedObstacleMap  = std::map<float, ObstacleTree<thz::Point32>::ObstaclesWithSameX>;
