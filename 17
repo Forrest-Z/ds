@@ -1,0 +1,24 @@
+#pragma once
+
+/*
+** https://github.com/mburst/dijkstras-algorithm/blob/master/dijkstras.cpp
+*/
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include "custom_types.h"
+#include "collision_detection.h"
+
+class Dijkstra {
+private:
+    CollisionDetection *m_collisionDetection;
+    std::unordered_map<int, const std::unordered_map<int, int>> m_vertices;
+public:
+    Dijkstra(CollisionDetection *collisionDetection);
+    ~Dijkstra();
+
+    void createGraph(const std::vector<std::vector<Vertex>>& vertexs);
+    std::vector<int> shortest_path(int start, int finish);
+private:
+    void add_vertex(int name, const std::unordered_map<int, int>& edges);
+};
