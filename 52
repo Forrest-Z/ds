@@ -1,70 +1,73 @@
-<?xml version="1.0"?>
-<package format="2">
-  <name>ivsimu_act</name>
-  <version>0.0.0</version>
-  <description>The ivsimu_act package</description>
+/*************************************************************************
+	> File Name: main.cpp
+	> Author: 
+	> Mail: 
+	> Created Time: 2017年11月25日 星期六 23时08分18秒
+ ************************************************************************/
 
-  <!-- One maintainer tag required, multiple allowed, one person per tag -->
-  <!-- Example:  -->
-  <!-- <maintainer email="jane.doe@example.com">Jane Doe</maintainer> -->
-  <maintainer email="idriver@todo.todo">idriver</maintainer>
+#include<iostream>
+#include <ros/ros.h>
+#include "ivlocmsg/ivsensorgps.h"
+#include "ivlocmsg/ivmsglocpos.h"
+#include <string>
+#include <sstream>
+#include <stdio.h>
+#include <string.h>
 
-
-  <!-- One license tag required, multiple allowed, one license per tag -->
-  <!-- Commonly used license strings: -->
-  <!--   BSD, MIT, Boost Software License, GPLv2, GPLv3, LGPLv2.1, LGPLv3 -->
-  <license>TODO</license>
-
-
-  <!-- Url tags are optional, but multiple are allowed, one per tag -->
-  <!-- Optional attribute type can be: website, bugtracker, or repository -->
-  <!-- Example: -->
-  <!-- <url type="website">http://wiki.ros.org/ivsimu_act</url> -->
+using namespace std;
 
 
-  <!-- Author tags are optional, multiple are allowed, one per tag -->
-  <!-- Authors do not have to be maintainers, but could be -->
-  <!-- Example: -->
-  <!-- <author email="jane.doe@example.com">Jane Doe</author> -->
 
 
-  <!-- The *depend tags are used to specify dependencies -->
-  <!-- Dependencies can be catkin packages or system dependencies -->
-  <!-- Examples: -->
-  <!-- Use depend as a shortcut for packages that are both build and exec dependencies -->
-  <!--   <depend>roscpp</depend> -->
-  <!--   Note that this is equivalent to the following: -->
-  <!--   <build_depend>roscpp</build_depend> -->
-  <!--   <exec_depend>roscpp</exec_depend> -->
-  <!-- Use build_depend for packages you need at compile time: -->
-  <!--   <build_depend>message_generation</build_depend> -->
-  <!-- Use build_export_depend for packages you need in order to build against this package: -->
-  <!--   <build_export_depend>message_generation</build_export_depend> -->
-  <!-- Use buildtool_depend for build tool packages: -->
-  <!--   <buildtool_depend>catkin</buildtool_depend> -->
-  <!-- Use exec_depend for packages you need at runtime: -->
-  <!--   <exec_depend>message_runtime</exec_depend> -->
-  <!-- Use test_depend for packages you need only for testing: -->
-  <!--   <test_depend>gtest</test_depend> -->
-  <!-- Use doc_depend for packages you need only for building documentation: -->
-  <!--   <doc_depend>doxygen</doc_depend> -->
-  <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>roscpp</build_depend>
-  <build_depend>rospy</build_depend>
-  <build_depend>std_msgs</build_depend>
-  <build_export_depend>roscpp</build_export_depend>
-  <build_export_depend>rospy</build_export_depend>
-  <build_export_depend>std_msgs</build_export_depend>
-  <exec_depend>roscpp</exec_depend>
-  <exec_depend>rospy</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
+int main(int argc, char **argv) {
+    ros::init(argc, argv, "ivsimugps");
+	ros::NodeHandle nh;
+    ros::Rate rate ( 20  );
+    
 
-  <build_depend>ivactuator</build_depend>
-  <exec_depend>ivactuator</exec_depend>
+    ros::Publisher pub = nh.advertise < ivlocmsg::ivsensorgps > ( "ivsensorgps", 1000  );
+	ros::Publisher pub_loc = nh.advertise < ivlocmsg::ivmsglocpos > ( "ivlocposlidar", 1000  );
+    ivlocmsg::ivsensorgps curgps;
+	ivlocmsg::ivmsglocpos curlocpos;
+    while(ros::ok())
+    {
+        rate.sleep();
+        nh.getParam("cur_sim_lon", curgps.lon);
+        nh.getParam("cur_sim_lat", curgps.lat);
+        nh.getParam("cur_sim_heading", curgps.heading);
+        nh.getParam("cur_sim_velocity", curgps.velocity);
+		
+		
+		nh.getParam("cur_sim_xg", curlocpos.xg);
+        nh.getParam("cur_sim_yg", curlocpos.yg);
+        nh.getParam("cur_sim_angle", curlocpos.angle);
+        nh.getParam("cur_sim_velocity", curlocpos.velocity);
+        cout << "zhongshan locpos_v:" << curlocpos.velocity << endl;
+		
+		curlocpos.lon = curgps.lon;
+		curlocpos.lat = curgps.lat;
+		curlocpos.heading = curgps.heading;
+		
+		
+		
+        curgps.satenum = 24;
+        curgps.isvalid = 1;
+        curgps.mode = 0;
+        curgps.status = 4;
 
-  <!-- The export tag contains other, unspecified, tags -->
-  <export>
-    <!-- Other tools can request additional information be placed here -->
+        pub.publish(curgps);
+		nh.setParam("isover", true);
+		pub_loc.publish(curlocpos);
+    }
+      return 0;
 
-  </export>
-</package>
+}
+
+
+
+
+
+
+
+
+
