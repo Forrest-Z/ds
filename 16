@@ -1,0 +1,125 @@
+#include <iostream>
+#include <limits>
+#include <algorithm>
+#include <cmath>
+#include "constants.h"
+#include "dijkstra.h"
+
+using namespace std;
+using namespace Constants;
+
+Dijkstra::Dijkstra(CollisionDetection *collisionDetection):m_collisionDetection(collisionDetection) 
+{
+    //TODO
+}
+
+Dijkstra::~Dijkstra()
+{
+    //TODO
+}
+
+void Dijkstra::add_vertex(int name, const std::unordered_map<int, int>& edges)
+{
+    m_vertices.insert(std::unordered_map<int, const std::unordered_map<int, int>>::value_type(name, edges));
+}
+
+void Dijkstra::createGraph(const std::vector<vector<Vertex>>& vertexs)
+{
+    auto it1 = vertexs.begin();
+    auto it2 = std::next(vertexs.begin());
+
+    for(; it2 != vertexs.end(); ++it1, ++it2)
+    {
+        // unordered_map<int, int> edges;
+        for(int i=0; i<it1->size(); ++i)
+        {
+            unordered_map<int, int> edges;
+            for(int j=0; j<it2->size(); ++j)
+            {
+                if(m_collisionDetection->collisionDetection((*it1)[i].point, (*it2)[j].point))
+                {
+                    // m_adjacencyMatrix[(*it1)[i].nodeIndex][(*it2)[j].nodeIndex] = INT_MAX;
+                    continue;
+                }
+                
+                float eulerDistance = sqrt(pow((*it2)[j].point.x - (*it1)[i].point.x, 2.0) + pow((*it2)[j].point.y - (*it1)[i].point.y, 2.0));
+                int   lateralOffset = abs((*it2)[j].lateralOffset - (*it1)[i].lateralOffset);
+                int   centerlateralOffset = abs((*it2)[j].lateralOffset + (*it1)[i].lateralOffset)/2;
+                int   weight = static_cast<int>(WD * eulerDistance * 10.0 + (1-WD)*lateralOffset * 10.0) + centerlateralOffset * 1;
+                // edges[(*it2)[j].nodeIndex] = weight;
+                int thz_j = (*it2)[j].nodeIndex;
+                // edges.insert({thz_j,weight});
+                edges.insert(make_pair(thz_j,weight));
+            }
+            add_vertex((*it1)[i].nodeIndex, edges);
+        }  
+    }
+
+    add_vertex(vertexs.back().back().nodeIndex, {});
+}
+
+vector<int> Dijkstra::shortest_path(int start, int finish)
+{
+    unordered_map<int, int> distances;
+    unordered_map<int, int> previous;
+    vector<int> nodes;
+    vector<int> path;
+    
+    auto comparator = [&] (int left, int right) { return distances[left] > distances[right]; };
+
+    for (auto& vertex : m_vertices)
+    {
+        if (vertex.first == start)
+        {
+            distances[vertex.first] = 0;
+        }
+        else
+        {
+            distances[vertex.first] = numeric_limits<int>::max();
+        }
+        
+        nodes.push_back(vertex.first);
+        push_heap(begin(nodes), end(nodes), comparator);
+    }
+    
+    while (!nodes.empty())
+    {
+        pop_heap(begin(nodes), end(nodes), comparator);
+        int smallest = nodes.back();
+        nodes.pop_back();
+        
+        if (smallest == finish)
+        {
+            while (previous.find(smallest) != end(previous))
+            {
+                path.push_back(smallest);
+                smallest = previous[smallest];
+            }
+            
+            break;
+        }
+        
+        if (distances[smallest] == numeric_limits<int>::max())
+        {
+            break;
+        }
+        
+        for (auto& neighbor : m_vertices[smallest])
+        {
+            int alt = distances[smallest] + neighbor.second;
+            if (alt < distances[neighbor.first])
+            {
+                distances[neighbor.first] = alt;
+                previous[neighbor.first] = smallest;
+                make_heap(begin(nodes), end(nodes), comparator);
+            }
+        }
+    }
+
+    if(!path.empty())
+    {
+        path.push_back(start);
+        reverse(path.begin(), path.end());
+    }
+    return path;
+}
