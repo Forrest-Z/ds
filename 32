@@ -1,0 +1,57 @@
+#pragma once
+
+#include <iostream>
+#include <vector>
+#include <memory>
+#include "common.h"
+#include "obstacle.h"
+#include "collision_check.h"
+
+class AstarDwa
+{
+public:
+	AstarDwa();
+	~AstarDwa();
+	thz::Path pathInterface(thz::Point32& carPosition, thz::Path& currentPath, thz::Path& rawPath);
+	void obstacleUpdate(std::vector<thz::Point32> &obstacles);
+
+public:
+	std::unique_ptr<Obstacle>       m_obstacle;
+
+private:
+	VehicleState startState, goalState;	
+	AstarDwaConfig             m_config;
+	// std::unique_ptr<Obstacle>       m_obstacle;
+	// UnorderedMap<float>        m_cost_so_far;
+	std::unique_ptr<CollisionCheck> m_collisionCheck;
+	double controlCycle;
+	std::unordered_map<int, int> samplenum;
+
+private:
+	bool connectTheGapToGoal(thz::Path &bestPath, UnorderedMap<std::vector<VehicleState>> &pathHashMap, 
+							std::vector<VehicleState> keyNodesOfBestPath,VehicleState goalState);
+
+	template <typename T>
+	void pathUpdate(thz::Path& path, T& point);
+
+	void getMultipleGoals(std::vector<int> &goalsIndexArray, const thz::Path& path);
+
+	std::vector<VehicleState> reconstructPath(VehicleState start, VehicleState goal,
+		UnorderedMap<VehicleState> &closeList, VehicleState last);
+
+	float gValUpdate(VehicleState cur, VehicleState next);
+
+	float hValUpdate(VehicleState cur, VehicleState goal);
+
+	std::vector<std::tuple<VehicleState, std::vector<VehicleState>, float>> generateTrajectory(VehicleState currentvs);
+
+	void dwaSpeedsSampling(VehicleState currentvs, std::vector<std::tuple<float, float, float>> &speedArray);
+
+	void forwardSpeedSampling(VehicleState currentvs, std::vector<std::tuple<float, float, float>> &speedArray);
+
+	VehicleState dynamicWindowApproach(UnorderedMap<VehicleState> &closeList,
+    					UnorderedMap<std::vector<VehicleState>> &pathHashMap, bool& flagGoalReached_,UnorderedMap<float>        &cost_so_far);
+
+	void updateOpenList(VehicleState &current,VehicleState goal, UnorderedMap<std::vector<VehicleState>> &pathHashMap, int &collisionflag,
+    		PriorityNode<VehicleState, float> &openList, UnorderedMap<VehicleState> &closeList,UnorderedMap<float>        &cost_so_far);
+};
