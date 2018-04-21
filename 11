@@ -1,168 +1,204 @@
-/*************************************************************************
-	> File Name: objectSimulation.h
-	> Author: 
-	> Mail: 
-	> Created Time: 2017年11月18日 星期六 19时36分47秒
- ************************************************************************/
+cmake_minimum_required(VERSION 2.8.3)
+project(ivobject_simulation)
 
-#ifndef _OBJECTSIMULATION_H
-#define _OBJECTSIMULATION_H
+## Compile as C++11, supported in ROS Kinetic and newer
+# add_compile_options(-std=c++11)
 
-#include "ros/ros.h"
-#include "ros/time.h"
+## Find catkin macros and libraries
+## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
+## is used, also find other catkin packages
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  std_msgs
+  perception_msgs
+  ivpathplanner
+  ivlocmsg
+  ivactuator
+  message_generation
+)
 
-#include "perception_msgs/ivmsgobjfus.h"
-#include "perception_msgs/objfus.h"
-#include "ivpathplanner/ivmsgpath.h"
-#include "ivpathplanner/motionpoint.h"
-#include "ivlocmsg/ivsensorgps.h"
-#include "ivactuator/ivactuator.h"
-#include "ivmap/ivmapmsglocpos.h"
-#include "ivmap/ivmapmsgvap.h"
-
-#include "ivobject_simulation/objectDebug.h"
-
-#include <sstream>
-#include <iostream>
-#include <fstream>
-#include <math.h>
-
-#include "globaldefine.h"
-#include "../../../../avoslib/geotool.h"
-
-#define SUBTOPIC_ACT      "ivactuator"
+## System dependencies are found with CMake's conventions
+# find_package(Boost REQUIRED COMPONENTS system)
 
 
+## Uncomment this if the package has a setup.py. This macro ensures
+## modules and global scripts declared therein get installed
+## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
+# catkin_python_setup()
 
-//actionnum  0:cancel  1:cut out   2: cut in  3  start
-using namespace std;
+################################################
+## Declare ROS messages, services and actions ##
+################################################
 
-typedef struct sMotionPath
-{
-  ivpathplanner::ivmsgpath msg;
-  bool isvalid;
-}sMotionPath;
+## To declare and build messages, services or actions from within this
+## package, follow these steps:
+## * Let MSG_DEP_SET be the set of packages whose message types you use in
+##   your messages/services/actions (e.g. std_msgs, actionlib_msgs, ...).
+## * In the file package.xml:
+##   * add a build_depend tag for "message_generation"
+##   * add a build_depend and a run_depend tag for each package in MSG_DEP_SET
+##   * If MSG_DEP_SET isn't empty the following dependency has been pulled in
+##     but can be declared for certainty nonetheless:
+##     * add a run_depend tag for "message_runtime"
+## * In this file (CMakeLists.txt):
+##   * add "message_generation" and every package in MSG_DEP_SET to
+##     find_package(catkin REQUIRED COMPONENTS ...)
+##   * add "message_runtime" and every package in MSG_DEP_SET to
+##     catkin_package(CATKIN_DEPENDS ...)
+##   * uncomment the add_*_files sections below as needed
+##     and list every .msg/.srv/.action file to be processed
+##   * uncomment the generate_messages entry below
+##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
-typedef struct sGps
-{
-  ivlocmsg::ivsensorgps msg;
-  bool isvalid;
-}sGps;
+## Generate messages in the 'msg' folder
+ add_message_files(
+   FILES
+   objectDebug.msg
+ )
 
-typedef struct sMapvap
-{
-  ivmap::ivmapmsgvap msg;
-  bool isvalid;
-}sMapvap;
+## Generate services in the 'srv' folder
+# add_service_files(
+#   FILES
+#   Service1.srv
+#   Service2.srv
+# )
 
+## Generate actions in the 'action' folder
+# add_action_files(
+#   FILES
+#   Action1.action
+#   Action2.action
+# )
 
-typedef struct sAct
-{
-  ivactuator::ivactuator msg;
-  bool isvalid;
-}sAct;
+## Generate added messages and services with any dependencies listed here
+ generate_messages(
+   DEPENDENCIES
+   std_msgs
+ )
 
+################################################
+## Declare ROS dynamic reconfigure parameters ##
+################################################
 
+## To declare and build dynamic reconfigure parameters within this
+## package, follow these steps:
+## * In the file package.xml:
+##   * add a build_depend and a run_depend tag for "dynamic_reconfigure"
+## * In this file (CMakeLists.txt):
+##   * add "dynamic_reconfigure" to
+##     find_package(catkin REQUIRED COMPONENTS ...)
+##   * uncomment the "generate_dynamic_reconfigure_options" section below
+##     and list every .cfg file to be processed
 
-typedef struct sObj_conf{
-    int id;
-    double x;
-    double y;
-    double vxrel;
-    double vyrel;
-    double v;
-	double runDis;
-	double y_dis;
+## Generate dynamic reconfigure parameters in the 'cfg' folder
+# generate_dynamic_reconfigure_options(
+#   cfg/DynReconf1.cfg
+#   cfg/DynReconf2.cfg
+# )
 
-//actionnum  0:cancel  1:cut out   2: cut in  3  start
-//0: follow outline   1: ready to cut in   2: follow inline  3: ready to cut out  
-	int moveState;
-	ros::Time  cut_Time;
-    
-    ivlocmsg::ivsensorgps gpsPoint;
-	sPointOfGCCS gccpoint;
-    sDynamicConfig dynamicConfig;
-}sObj_conf;
+###################################
+## catkin specific configuration ##
+###################################
+## The catkin_package macro generates cmake config files for your package
+## Declare things to be passed to dependent projects
+## INCLUDE_DIRS: uncomment this if your package contains header files
+## LIBRARIES: libraries you create in this project that dependent projects also need
+## CATKIN_DEPENDS: catkin_packages dependent projects also need
+## DEPENDS: system dependencies of this project that dependent projects also need
+catkin_package(
+#  INCLUDE_DIRS include
+#  LIBRARIES ivobject_simulation
+  CATKIN_DEPENDS roscpp rospy std_msgs
+#  DEPENDS system_lib
+	message_runtime
+)
 
-class objectSimulation
-{
-public:
-    //! Constructor.
-    objectSimulation ( ros::NodeHandle mh );
-    ~objectSimulation();
-    void run();
+###########
+## Build ##
+###########
 
-private:
-  
-    void get_motionPath(const ivpathplanner::ivmsgpath::ConstPtr& msg);
-    void get_gps(const ivlocmsg::ivsensorgps::ConstPtr & msg);
-	void get_act(const ivactuator::ivactuator::ConstPtr &msg);
-	void subCallback_locpos ( const ivmap::ivmapmsglocpos::ConstPtr &msg );
-	void get_mapvap(const ivmap::ivmapmsgvap::ConstPtr & msg);
-    
-    
-    void generateObjs();
-    void getgConfig();
-    void generateA();
-    void generateV();
-    
-    void getGpsFromPath();
-    sPoint2d getClosestPoint(sPoint2d point);
-	sPoint2d getClosestDis(double dis);
-	void forwardDis_FF(sObj_conf &obj_conf, double dis);
-	void forwardDis_SS(sObj_conf &obj_conf);
-	void forwardDis_CISD_y(sObj_conf &obj_conf);
-	
-    double getHeading();
-    double getHeadingFromDis(double dis);
-    double getDiffAngle(double angle1, double angle2);
+## Specify additional locations of header files
+## Your package locations should be listed before other locations
+include_directories(
+# include
+  ${catkin_INCLUDE_DIRS}
+)
 
-private:
-    ros::Publisher pub_obj;
-    ros::Publisher pub_objDebug;
-    ros::Subscriber sub_path;
-	ros::Subscriber sub_gps;
-	ros::Subscriber sub_act;
-	ros::Subscriber sub_mapvap;
-	ros::Subscriber sub_locpos;
-    ros::NodeHandle gnh; 
-    
-    sDynamicConfig gConfig;
-    perception_msgs::ivmsgobjfus objs;
-    ivobject_simulation::objectDebug objectDebug;
-    vector<sDynamicConfig> gConfigVec;
-    
-    vector<sObj_conf> obj_confVec;
-    
-    sMotionPath path;
-    sGps gps;
-	sAct act;
-	sMapvap mapvap;
-	
-	geotool mgeoTool;
+## Declare a C++ library
+# add_library(${PROJECT_NAME}
+#   src/${PROJECT_NAME}/ivobject_simulation.cpp
+# )
 
-    ros::Time PathRevTime;
-	ros::Time objRevTime;
-	float self_v;
-    ivlocmsg::ivsensorgps curgps;
-	ivlocmsg::ivsensorgps TLgps;
-	ivlocmsg::ivsensorgps initGps;
+## Add cmake target dependencies of the library
+## as an example, code may need to be generated before libraries
+## either from message generation or dynamic reconfigure
+# add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
-	sPointOfGCCS lastGCCS;
-	float checkSumDis;
-	float gpsSumDis, locposdis;
-	bool isgpsvalid;
-	
-	ivmap::ivmapmsglocpos curlocpos;
-	double lastxg,lastyg;
-	double lastobjxg,lastobjyg;
-	double lastPathDis;
-};
+## Declare a C++ executable
+## With catkin_make all packages are built within a single CMake context
+## The recommended prefix ensures that target names across packages don't collide
+add_executable(${PROJECT_NAME}_node src/main.cpp src/objectSimulation.cpp ../../../avoslib/geotool.cpp)
 
+## Rename C++ executable without prefix
+## The above recommended prefix causes long target names, the following renames the
+## target back to the shorter version for ease of user use
+## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
+# set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
 
+## Add cmake target dependencies of the executable
+## same as for the library above
+add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
+## Specify libraries to link a library or executable target against
+ target_link_libraries(${PROJECT_NAME}_node
+   ${catkin_LIBRARIES}
+ )
 
+#############
+## Install ##
+#############
 
+# all install targets should use catkin DESTINATION variables
+# See http://ros.org/doc/api/catkin/html/adv_user_guide/variables.html
 
+## Mark executable scripts (Python etc.) for installation
+## in contrast to setup.py, you can choose the destination
+# install(PROGRAMS
+#   scripts/my_python_script
+#   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
 
-#endif
+## Mark executables and/or libraries for installation
+# install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_node
+#   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+# )
+
+## Mark cpp header files for installation
+# install(DIRECTORY include/${PROJECT_NAME}/
+#   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+#   FILES_MATCHING PATTERN "*.h"
+#   PATTERN ".svn" EXCLUDE
+# )
+
+## Mark other files for installation (e.g. launch and bag files, etc.)
+# install(FILES
+#   # myfile1
+#   # myfile2
+#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+# )
+
+#############
+## Testing ##
+#############
+
+## Add gtest based cpp test target and link libraries
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_ivobject_simulation.cpp)
+# if(TARGET ${PROJECT_NAME}-test)
+#   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
+# endif()
+
+## Add folders to be run by python nosetests
+# catkin_add_nosetests(test)
