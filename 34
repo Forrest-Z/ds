@@ -1,0 +1,24 @@
+#pragma once 
+
+#include <iostream>
+#include "common.h"
+
+class CollisionCheck
+{
+public:
+	CollisionCheck(AstarDwaConfig* config, SortedObstacleMap* obstacles);
+	~CollisionCheck();
+
+	bool collisionDetection(std::vector<thz::Point32> trajectory);
+	bool collisionDetection(std::vector<VehicleState>& vehicleStates);
+	int collisionDetection(const std::vector<VehicleState>& vehicleStates, 
+		const VehicleState& goalVehicleState, bool& flagGoalReached_);
+
+	
+private:
+	AstarDwaConfig    *m_config;
+	SortedObstacleMap *m_obstacles;
+
+private:
+	bool checkCollision(thz::Point32& point);
+};
