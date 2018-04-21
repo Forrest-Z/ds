@@ -1,0 +1,428 @@
+#!/usr/bin/env python
+
+"""
+Copyright (c) 2011, Willow Garage, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the Willow Garage, Inc. nor the names of its
+      contributors may be used to endorse or promote products derived from
+      this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES LOSS OF USE, DATA, OR PROFITS OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+"""
+
+import rospy
+import copy
+
+from interactive_markers.interactive_marker_server import *
+from interactive_markers.menu_handler import *
+from visualization_msgs.msg import *
+from geometry_msgs.msg import Point
+
+from random import random
+from math import sin
+import copy
+import dynamic_reconfigure.client
+from perception_msgs.msg import *
+
+server = None
+menu_handler = MenuHandler()
+br = None
+counter = 0
+client = dynamic_reconfigure.client.Client("ivsimulationenv")
+carLength = 5.5
+carWidth = 1.85
+car_height = 4.5
+gMarker_num = 0
+gCurrent_obj_Id = 0
+
+
+dynamic_config = {'Target_ID':0,
+                  'Function':0,
+                  'x':10.0,
+                  'R_x':0,
+                  'y':0,
+                  'R_y':0,
+                  'v':0,
+                  'R_v':0,
+                  'Acceleration_selection':0,
+                  'a':0,
+                  'auto_acceleration':False,
+                  'cycle_time':10,
+                  'Range': 10,
+                  'action': 0}
+
+
+
+list_config = []
+def frameCallback( msg ):
+    global counter, br
+    time = rospy.Time.now()
+
+
+    rospy.loginfo ("configure_forclient  " + str(rospy.get_param("configure_forclient", True)) + "|" + str(rospy.get_param("configure", True)))
+    if (rospy.get_param("configure_forclient") == False) and (rospy.get_param("configure") == True):
+
+        rospy.loginfo("setting,.........")
+        rospy.set_param("configure_forclient", True)
+
+        Target_ID = rospy.get_param("Target_ID",0);
+        config = copy.deepcopy(dynamic_config)
+        #config['Target_ID'] = rospy.get_param('Target_ID',0)
+        config['Function'] = rospy.get_param('function', 0)
+        config['x'] = rospy.get_param('sim_x', 10);
+        config['R_x'] = rospy.get_param('sim_R_x', 0);
+        config['y'] = rospy.get_param('sim_y',0)
+        config['R_y'] = rospy.get_param('sim_R_y',0)
+        config['v'] = rospy.get_param('sim_v',0)
+        config['R_v'] = rospy.get_param('sim_R_v',0)
+        config['Acceleration_selection'] = rospy.get_param('sim_acceleration_selection',0)
+        config['a'] = rospy.get_param('sim_a',0)
+        config['auto_acceleration'] = rospy.get_param('sim_auto_acceleration',0)
+        config['cycle_time'] = rospy.get_param('sim_cycle_time',0)
+        config['Range'] = rospy.get_param('sim_Range',0)
+        config['action'] = rospy.get_param('sim_action',0)
+        rospy.loginfo("Target_ID :" + str(gCurrent_obj_Id))
+        str_ = "id_" + str(gCurrent_obj_Id);
+        pose = (server.get(str_)).pose
+        pose.position.x = config['x']
+        pose.position.y = config['y']
+        server.setPose("id_" + str(gCurrent_obj_Id),pose);
+        rospy.loginfo("action " + str(config['action']))
+        server.applyChanges()
+        for i in range(len(list_config)):
+            list_config[i]['action'] = config['action']
+            #rospy.loginfo("Target_ID  " + str(list_config[i]['Target_ID']))
+            if list_config[i]['Target_ID'] == gCurrent_obj_Id:
+                config['Target_ID'] = gCurrent_obj_Id
+                list_config[i] = config
+                break
+    
+
+    
+
+
+
+def processFeedback( feedback ):
+    global gMarker_num
+    global list_config
+    global gCurrent_obj_Id
+    s = "Feedback from marker '" + feedback.marker_name
+    s += "' / control '" + feedback.control_name + "'"
+
+    mp = ""
+    mark_name = feedback.marker_name;
+    if feedback.mouse_point_valid:
+        mp = " at " + str(feedback.mouse_point.x)
+        mp += ", " + str(feedback.mouse_point.y)
+        mp += ", " + str(feedback.mouse_point.z)
+        mp += " in frame " + feedback.header.frame_id
+
+    if feedback.event_type == InteractiveMarkerFeedback.BUTTON_CLICK:
+        rospy.loginfo( s + ": button click" + mp + "." )
+    elif feedback.event_type == InteractiveMarkerFeedback.MENU_SELECT:
+        #if feedback.menu_entry_id == 1:     #Configure.....
+        #    rospy.loginfo("Configure.....")
+        #    rospy.set_param("configure",True)
+        if feedback.menu_entry_id == 1:   #configure OK
+            rospy.loginfo("config ok")
+            rospy.set_param("configure",False)
+            rospy.set_param("configure_forclient",False)
+            tempConfig = {'Target_ID':gCurrent_obj_Id}
+            config = client.update_configuration(tempConfig)
+            rospy.set_param("ac_target_id",gCurrent_obj_Id)
+            rospy.set_param("ac_click_num", feedback.menu_entry_id)
+
+        elif feedback.menu_entry_id == 2:         #delete
+            rospy.loginfo("delete: " + feedback.marker_name  + str(len(list_config)))
+            rospy.set_param("ac_target_id",gCurrent_obj_Id)
+            if len(list_config) > 1:
+                rospy.set_param("ac_click_num", feedback.menu_entry_id)
+                rospy.loginfo("ready to deli" + mark_name)
+                server.erase(mark_name)
+                num = int(mark_name[-1:])
+                for i in range(len(list_config)):
+                    if list_config[i]['Target_ID'] == num:
+                        del list_config[i]
+                        break
+            rospy.loginfo("num : " + str(len(list_config)))
+        elif feedback.menu_entry_id == 3:       #add_new
+
+            rospy.set_param("ac_target_id",gMarker_num)
+            rospy.set_param("ac_click_num", feedback.menu_entry_id)
+            position = Point( -10, -10, 0)
+            make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, position, True )
+            #config = copy.deepcopy(dynamic_config);
+            #config["Target_ID"] = gMarker_num
+            #list_config.append(config)
+            rospy.loginfo("add_new" + str(len(list_config)))
+        rospy.loginfo( s + ": menu item " + str(feedback.menu_entry_id) + " clicked" + mp + "." )
+    elif feedback.event_type == InteractiveMarkerFeedback.POSE_UPDATE:
+        rospy.loginfo( s + ": pose changed" + str(feedback.pose.position.x) + "||" + str(feedback.pose.position.y))
+
+# TODO
+#          << "\nposition = "
+#          << feedback.pose.position.x
+#          << ", " << feedback.pose.position.y
+#          << ", " << feedback.pose.position.z
+#          << "\norientation = "
+#          << feedback.pose.orientation.w
+#          << ", " << feedback.pose.orientation.x
+#          << ", " << feedback.pose.orientation.y
+#          << ", " << feedback.pose.orientation.z
+#          << "\nframe: " << feedback.header.frame_id
+#          << " time: " << feedback.header.stamp.sec << "sec, "
+#          << feedback.header.stamp.nsec << " nsec" )
+    elif feedback.event_type == InteractiveMarkerFeedback.MOUSE_DOWN:
+        rospy.loginfo( s + ": mouse down" + mp + "." )
+    elif feedback.event_type == InteractiveMarkerFeedback.MOUSE_UP:
+        rospy.loginfo( s + ": mouse up" + mp + "." )
+        num = int(mark_name[-1:])
+        gCurrent_obj_Id = num
+        found_config = None
+        for i in range(len(list_config)):
+            rospy.loginfo("Target_ID mouse up  " + str(list_config[i]['Target_ID']))
+            if list_config[i]['Target_ID'] == num:
+                found_config = list_config[i]
+                found_config['x'] = feedback.pose.position.x
+                found_config['y'] = feedback.pose.position.y
+                rospy.set_param('sim_x', feedback.pose.position.x)
+                rospy.set_param('sim_y', feedback.pose.position.y)
+                break
+        dynamic_config['x'] = feedback.pose.position.x
+        dynamic_config['y'] = feedback.pose.position.y
+        found_config['action'] = rospy.get_param('sim_action',0)
+        if found_config['action'] != 3:
+            config = client.update_configuration(found_config)
+    server.applyChanges()
+
+
+def rand( min_, max_ ):
+    return min_ + random()*(max_-min_)
+
+def makeBox( msg ):
+    marker = Marker()
+
+    #marker.type = Marker.MESH_RESOURCE
+    marker.type = Marker.CUBE
+    marker.scale.x = msg.scale * carLength
+    marker.scale.y = msg.scale * carWidth
+    marker.scale.z = msg.scale * car_height
+    marker.mesh_use_embedded_materials = True
+    marker.color.r = 0.5
+    marker.color.g = 0.0
+    marker.color.b = 0.0
+    marker.color.a = 1.0
+    marker.mesh_resource = "package://interactive_rivz/resource/car/CarModel.dae"
+    #visualization_tutorials/interactive_marker_tutorials/resource/car
+    return marker
+
+def makeBoxControl( msg ):
+    control =  InteractiveMarkerControl()
+    control.always_visible = True
+    control.markers.append( makeBox(msg) )
+    msg.controls.append( control )
+    return control
+
+def saveMarker( int_marker ):
+  server.insert(int_marker, processFeedback)
+
+
+#####################################################################
+# Marker Creation
+
+def make6DofMarker( fixed, interaction_mode, position, show_6dof = False):
+
+    global gMarker_num
+    int_marker = InteractiveMarker()
+    int_marker.header.frame_id = "base_link"
+    int_marker.pose.position = position
+    int_marker.scale = 1
+
+    config = copy.deepcopy(dynamic_config);
+    config['Target_ID'] = gMarker_num;
+    list_config.append(config)
+    int_marker.name = "id_" + str(gMarker_num)
+    gMarker_num = gMarker_num + 1;
+    #int_marker.name = "id_1"
+    int_marker.description = "Simple 6-DOF Control"
+
+    # insert a box
+    makeBoxControl(int_marker)
+    int_marker.controls[0].interaction_mode = interaction_mode
+
+    if fixed:
+        #int_marker.name += "_fixed"
+        int_marker.description += "\n(fixed orientation)"
+
+    if interaction_mode != InteractiveMarkerControl.NONE:
+        control_modes_dict = { 
+                          InteractiveMarkerControl.MOVE_3D : "MOVE_3D",
+                          InteractiveMarkerControl.ROTATE_3D : "ROTATE_3D",
+                          InteractiveMarkerControl.MOVE_ROTATE_3D : "MOVE_ROTATE_3D" }
+        #int_marker.name += "_" + control_modes_dict[interaction_mode]
+        int_marker.description = "3D Control"
+        if show_6dof: 
+          int_marker.description += " + 6-DOF controls"
+        int_marker.description += "\n" + control_modes_dict[interaction_mode]
+    
+    if show_6dof: 
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 1
+        control.orientation.y = 0
+        control.orientation.z = 0
+        control.name = "rotate_x"
+        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 1
+        control.orientation.y = 0
+        control.orientation.z = 0
+        control.name = "move_x"
+        control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 0
+        control.orientation.y = 1
+        control.orientation.z = 0
+        control.name = "rotate_z"
+        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 0
+        control.orientation.y = 1
+        control.orientation.z = 0
+        control.name = "move_z"
+        control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 0
+        control.orientation.y = 0
+        control.orientation.z = 1
+        control.name = "rotate_y"
+        control.interaction_mode = InteractiveMarkerControl.ROTATE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+        control = InteractiveMarkerControl()
+        control.orientation.w = 1
+        control.orientation.x = 0
+        control.orientation.y = 0
+        control.orientation.z = 1
+        control.name = "move_y"
+        control.interaction_mode = InteractiveMarkerControl.MOVE_AXIS
+        if fixed:
+            control.orientation_mode = InteractiveMarkerControl.FIXED
+        int_marker.controls.append(control)
+
+    server.insert(int_marker, processFeedback)
+    menu_handler.apply( server, int_marker.name )
+    rospy.loginfo("test *****************" + int_marker.name)
+
+
+
+
+
+def makeMenuMarker(position):
+    int_marker = InteractiveMarker()
+    int_marker.header.frame_id = "base_link"
+    int_marker.pose.position = position
+    int_marker.scale = 1
+
+    int_marker.name = "context_menu"
+    int_marker.description = "Context Menu\n(Right Click)"
+
+    # make one control using default visuals
+    control = InteractiveMarkerControl()
+    control.interaction_mode = InteractiveMarkerControl.MENU
+    control.description="Options"
+    control.name = "menu_only_control"
+    int_marker.controls.append(copy.deepcopy(control))
+
+    # make one control showing a box
+    marker = makeBox( int_marker )
+    control.markers.append( marker )
+    control.always_visible = True
+    int_marker.controls.append(control)
+
+    server.insert(int_marker, processFeedback)
+    menu_handler.apply( server, int_marker.name )
+
+
+
+
+def callback_obj(msg):
+    rospy.loginfo("recived message "+ str(len(msg.objs)))
+    for i in range(len(msg.objs)):
+        obj_id = msg.objs[i].id
+        name = "id_" + str(obj_id)
+        pose = server.get(name).pose
+        pose.position.x = msg.objs[i].x
+        pose.position.y = msg.objs[i].y
+        server.setPose(name,pose);
+        server.applyChanges()
+
+
+
+
+
+
+
+if __name__=="__main__":
+    rospy.init_node("interactive_rviz")
+    
+
+    server = InteractiveMarkerServer("basic_controls")
+
+    #menu_handler.insert( "Configure.....", callback=processFeedback )
+    menu_handler.insert( "Configure OK", callback=processFeedback )
+    menu_handler.insert( "delete", callback=processFeedback )
+    menu_handler.insert( "add_new", callback=processFeedback )
+  
+    
+    position = Point( -10, -10, 0)
+    make6DofMarker( False, InteractiveMarkerControl.MOVE_ROTATE_3D, position, True )
+
+    server.applyChanges()
+
+    rospy.Subscriber("ivobjectfusion", ivmsgobjfus, callback_obj)
+
+    
+    rospy.Timer(rospy.Duration(1), frameCallback)
+    rospy.spin()
