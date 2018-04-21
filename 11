@@ -1,146 +1,168 @@
+/*************************************************************************
+	> File Name: objectSimulation.h
+	> Author: 
+	> Mail: 
+	> Created Time: 2017年11月18日 星期六 19时36分47秒
+ ************************************************************************/
 
-#include <algorithm>
-#include <cmath>
-#include "collision_detection.h"
-#include "constants.h"
+#ifndef _OBJECTSIMULATION_H
+#define _OBJECTSIMULATION_H
 
-using namespace Constants;
+#include "ros/ros.h"
+#include "ros/time.h"
 
-CollisionDetection::CollisionDetection()
+#include "perception_msgs/ivmsgobjfus.h"
+#include "perception_msgs/objfus.h"
+#include "ivpathplanner/ivmsgpath.h"
+#include "ivpathplanner/motionpoint.h"
+#include "ivlocmsg/ivsensorgps.h"
+#include "ivactuator/ivactuator.h"
+#include "ivmap/ivmapmsglocpos.h"
+#include "ivmap/ivmapmsgvap.h"
+
+#include "ivobject_simulation/objectDebug.h"
+
+#include <sstream>
+#include <iostream>
+#include <fstream>
+#include <math.h>
+
+#include "globaldefine.h"
+#include "../../../../avoslib/geotool.h"
+
+#define SUBTOPIC_ACT      "ivactuator"
+
+
+
+//actionnum  0:cancel  1:cut out   2: cut in  3  start
+using namespace std;
+
+typedef struct sMotionPath
 {
-	//TODO
-}
+  ivpathplanner::ivmsgpath msg;
+  bool isvalid;
+}sMotionPath;
 
-CollisionDetection::~CollisionDetection()
+typedef struct sGps
 {
-	//TODO
-}
+  ivlocmsg::ivsensorgps msg;
+  bool isvalid;
+}sGps;
 
-void CollisionDetection::obstaclesUpdate(const std::vector<std::vector<Point>>& obstacles)
+typedef struct sMapvap
 {
-	m_obstacles.clear();
-	for(int i=0; i<obstacles.size(); ++i)
-	{
-		for(int j=0; j<obstacles[i].size(); ++j)
-		{
-			int x = static_cast<int>(obstacles[i][j].x * 10.0);
-			int y = static_cast<int>(obstacles[i][j].y * 10.0);
-			m_obstacles[x].insert(y);
-		}
-	}
-}
+  ivmap::ivmapmsgvap msg;
+  bool isvalid;
+}sMapvap;
 
-bool CollisionDetection::collisionDetection(const Point& point1, const Point& point2)/////
+
+typedef struct sAct
 {
-	if(m_obstacles.empty())
-		return false;
+  ivactuator::ivactuator msg;
+  bool isvalid;
+}sAct;
 
-	//https://stackoverflow.com/questions/1469149/calculating-vertices-of-a-rotated-rectangle
-	//https://blog.csdn.net/can3981132/article/details/52518833
-	float x0 = (point1.x + point2.x)/2.0;
-	float y0 = (point1.y + point2.y)/2.0;
-	float l = (sqrt(pow(point2.x-point1.x, 2.0) + pow(point2.y-point1.y, 2.0)) + carWidth)/2;
-	float w = carWidth/2;
-	float theta = atan2(point2.y-point1.y, point2.x-point1.x);
 
-	Point p1((x0-l-x0)*cos(theta)-(y0-w-y0)*sin(theta)+x0,(x0-l-x0)*sin(theta)+(y0-w-y0)*cos(theta)+y0,0.0);
-    Point p2((x0+l-x0)*cos(theta)-(y0-w-y0)*sin(theta)+x0,(x0+l-x0)*sin(theta)+(y0-w-y0)*cos(theta)+y0,0.0);
-    Point p3((x0+l-x0)*cos(theta)-(y0+w-y0)*sin(theta)+x0,(x0+l-x0)*sin(theta)+(y0+w-y0)*cos(theta)+y0,0.0);
-    Point p4((x0-l-x0)*cos(theta)-(y0+w-y0)*sin(theta)+x0,(x0-l-x0)*sin(theta)+(y0+w-y0)*cos(theta)+y0,0.0);
 
-	Polygon polygon;
-	polygon.points.push_back(p1); polygon.points.push_back(p2); polygon.points.push_back(p3); polygon.points.push_back(p4);
+typedef struct sObj_conf{
+    int id;
+    double x;
+    double y;
+    double vxrel;
+    double vyrel;
+    double v;
+	double runDis;
+	double y_dis;
 
-	float ax[4] = {p1.x,p2.x,p3.x,p4.x};
-	float ay[4] = {p1.y,p2.y,p3.y,p4.y};
-	std::sort(ax, ax+4);
-	std::sort(ay, ay+4);
-	int x_min = static_cast<int>(ax[0] * 10.0);
-	int y_min = static_cast<int>(ay[0] * 10.0);
-	int x_max = static_cast<int>(ax[3] * 10.0);
-	int y_max = static_cast<int>(ay[3] * 10.0);
+//actionnum  0:cancel  1:cut out   2: cut in  3  start
+//0: follow outline   1: ready to cut in   2: follow inline  3: ready to cut out  
+	int moveState;
+	ros::Time  cut_Time;
+    
+    ivlocmsg::ivsensorgps gpsPoint;
+	sPointOfGCCS gccpoint;
+    sDynamicConfig dynamicConfig;
+}sObj_conf;
 
-	std::map<int, std::set<int>>::iterator it_obstaclesWithSameX = m_obstacles.lower_bound(x_min);
-
-	//std map lower_bound(key),找出map中第一个<=key的键值，如果所有的键值都比key大，则将这些比key大的键值中最小的那个返回
-	if (!m_obstacles.count(it_obstaclesWithSameX->first) || it_obstaclesWithSameX->first > x_max)
-	{
-		return false;
-	}
-	else
-	{
-		for (; it_obstaclesWithSameX->first <= x_max && it_obstaclesWithSameX != m_obstacles.end(); ++it_obstaclesWithSameX)
-		{
-			std::set<int>::iterator it_obstacle_y = m_obstacles[it_obstaclesWithSameX->first].lower_bound(y_min);
-			if (!m_obstacles[it_obstaclesWithSameX->first].count(*it_obstacle_y) || *it_obstacle_y > y_max)
-			{
-				continue;
-			}
-			else
-			{
-				for (; *it_obstacle_y <= y_max && it_obstacle_y != m_obstacles[it_obstaclesWithSameX->first].end(); ++it_obstacle_y)
-				{
-					Point p(it_obstaclesWithSameX->first/10.0, (*it_obstacle_y)/10.0, 0.0);
-					if (isInsideFootprint(p, polygon))
-					{
-						return true;
-					}
-				}
-			}
-		}
-	}
-	return false;
-}
-
-bool CollisionDetection::isInsideFootprint(const Point& point, const Polygon &bounding_polygon)
+class objectSimulation
 {
-	int counter = 0;
-    int i;
-    double xinters;
-    Point p1;
-    Point p2;
-    int N = bounding_polygon.points.size();
-    p1 = bounding_polygon.points.at(0);
-    for (i = 1; i <= N; i++)
-    {
-        p2 = bounding_polygon.points.at(i % N);
-        if (point.y > std::min<float>(p1.y, p2.y))
-        {
-            if (point.y <= std::max<float>(p1.y, p2.y))
-            {
-                if (point.x <= std::max<float>(p1.x, p2.x))
-                {
-                    if (p1.y != p2.y)
-                    {
-                        xinters = (point.y - p1.y) * (p2.x - p1.x) / (p2.y - p1.y) + p1.x;
-                        if (p1.x == p2.x || point.x <= xinters)
-                            counter++;
-                    }
-                }
-            }
-        }
-        p1 = p2;
-    }
-    if (counter % 2 == 0)
-        return false;
- 	else
-        return true;
-}
+public:
+    //! Constructor.
+    objectSimulation ( ros::NodeHandle mh );
+    ~objectSimulation();
+    void run();
 
-/*
-map,set对于关键字来说是唯一的，也就是说在map/set中不存在等价的两个(以上)元素，因此某个元素在map/set中出现的次数最多只能为1，用count得到的结果不是0就是1。
+private:
+  
+    void get_motionPath(const ivpathplanner::ivmsgpath::ConstPtr& msg);
+    void get_gps(const ivlocmsg::ivsensorgps::ConstPtr & msg);
+	void get_act(const ivactuator::ivactuator::ConstPtr &msg);
+	void subCallback_locpos ( const ivmap::ivmapmsglocpos::ConstPtr &msg );
+	void get_mapvap(const ivmap::ivmapmsgvap::ConstPtr & msg);
+    
+    
+    void generateObjs();
+    void getgConfig();
+    void generateA();
+    void generateV();
+    
+    void getGpsFromPath();
+    sPoint2d getClosestPoint(sPoint2d point);
+	sPoint2d getClosestDis(double dis);
+	void forwardDis_FF(sObj_conf &obj_conf, double dis);
+	void forwardDis_SS(sObj_conf &obj_conf);
+	void forwardDis_CISD_y(sObj_conf &obj_conf);
+	
+    double getHeading();
+    double getHeadingFromDis(double dis);
+    double getDiffAngle(double angle1, double angle2);
 
-对Jinhao(辣子鸡丁)(灌水是我无言的抗议) 的发言补充一下：
+private:
+    ros::Publisher pub_obj;
+    ros::Publisher pub_objDebug;
+    ros::Subscriber sub_path;
+	ros::Subscriber sub_gps;
+	ros::Subscriber sub_act;
+	ros::Subscriber sub_mapvap;
+	ros::Subscriber sub_locpos;
+    ros::NodeHandle gnh; 
+    
+    sDynamicConfig gConfig;
+    perception_msgs::ivmsgobjfus objs;
+    ivobject_simulation::objectDebug objectDebug;
+    vector<sDynamicConfig> gConfigVec;
+    
+    vector<sObj_conf> obj_confVec;
+    
+    sMotionPath path;
+    sGps gps;
+	sAct act;
+	sMapvap mapvap;
+	
+	geotool mgeoTool;
 
-例如 我们判断一个key是否存在，如果存在就输出，不存在就不输出
-map<string, int> a;
-cout<<a["abc"]<<endl;
-如果a中间原本没有"abc"，那么a["abc"]会把"abc"加入到a中间，因此不能使用这种方法
+    ros::Time PathRevTime;
+	ros::Time objRevTime;
+	float self_v;
+    ivlocmsg::ivsensorgps curgps;
+	ivlocmsg::ivsensorgps TLgps;
+	ivlocmsg::ivsensorgps initGps;
 
-if(a.count("China"))        //对了
-    cout<<a["China"]<<endl;
-这种方法正确，但是效率不高：count先要查找一边a，然后a["China"]又要查找一边，我建议使用下面的方法：
+	sPointOfGCCS lastGCCS;
+	float checkSumDis;
+	float gpsSumDis, locposdis;
+	bool isgpsvalid;
+	
+	ivmap::ivmapmsglocpos curlocpos;
+	double lastxg,lastyg;
+	double lastobjxg,lastobjyg;
+	double lastPathDis;
+};
 
-map<string,int>::iterator fi=a.find("China");//查找是否有"China"，返回一个迭代器
-if(fi!=a.end()) cout<<a->second;//找到了，输出"China"对应的int值
-*/
+
+
+
+
+
+
+#endif
