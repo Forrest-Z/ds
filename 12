@@ -1,0 +1,22 @@
+#pragma once
+
+#include <vector>
+#include <set>
+#include <map>
+#include "custom_types.h"
+
+class CollisionDetection
+{
+public:
+	CollisionDetection();
+	~CollisionDetection();
+
+	void obstaclesUpdate(const std::vector<std::vector<Point>>& obstacles);
+	bool collisionDetection(const Point& point1, const Point& point2);
+
+private:
+	bool isInsideFootprint(const Point& point, const Polygon &bounding_polygon);
+
+private:
+	std::map<int, std::set<int>> m_obstacles;
+};
