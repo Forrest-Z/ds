@@ -1,6 +1,61 @@
-float32 dis
-float32 v
-float32 relx
-float32 rely
-float32 vabs
+/*************************************************************************
+	> File Name: globaldefine.h
+	> Author: 
+	> Mail: 
+	> Created Time: 2017年11月18日 星期六 19时29分06秒
+ ************************************************************************/
+
+#ifndef _GLOBALDEFINE_H
+#define _GLOBALDEFINE_H
+
+
+#define MENE_CONFIG_OK (int)1
+#define MENE_DELETE    (int)2
+#define MENE_ADDNEW    (int)3
+
+
+//following forward
+#define FUNC_FF 	(int)0	
+//stay still
+#define FUNC_SS  	(int)1 
+//cut in slow down
+#define FUNC_CISD    	(int)2
+//cut in speed up
+#define FUNC_CISU    	(int)3	
+//overtaking by side lane
+#define FUNC_OBSL    	(int)4
+//following backward
+#define FUNC_FB    	(int)5	
+#include <boost/graph/graph_concepts.hpp>
+
+typedef struct sDynamicConfig{
+    int Target_ID;
+    int function;
+    double x;
+    double R_x;
+    double y;
+    double R_y;
+    double v;
+    double R_v;
+    bool acceleration_selection;
+    double a;
+    int auto_scceleration;
+    double cycle_time;
+    double range;
+    double action;
+
+    bool isConfigureOK;
+    double T;
+}sDynamicConfig;
+
+
+
+
+
+
+
+
+
+#endif
+
 
