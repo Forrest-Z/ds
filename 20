@@ -1,0 +1,159 @@
+#include <cmath>
+#include <iostream>
+#include "reference_trajectory_planning.h"
+#include "dijkstra.h"
+#include "constants.h"
+#include "cubic_spline.h"
+#include <ros/ros.h>
+using namespace Constants;
+
+ReferenceTrajectoryPlanning::ReferenceTrajectoryPlanning(CollisionDetection *collisionDetection)
+	:m_collisionDetection(collisionDetection),m_seedsNum(0)
+{
+
+}
+
+ReferenceTrajectoryPlanning::~ReferenceTrajectoryPlanning()
+{
+
+}
+
+std::vector<Point> ReferenceTrajectoryPlanning::generatePath(const std::vector<int>& lanePointsIndex)
+{
+	printf("gegge\n");
+	Dijkstra dijkstra(m_collisionDetection);
+	int lp_size = lanePointsIndex.size();
+	m_seedsNum = lp_size + (lp_size - 2) * lateralSamplingNum * 2;
+
+	dijkstra.createGraph(generateSeeds(lanePointsIndex));
+
+	vector<int> v = dijkstra.shortest_path(0, m_seedsNum-1);printf("gegge\n");
+
+	std::vector<Point> keyPointsOfPath;
+	for(auto it=v.begin(); it!=v.end(); ++it)
+	{
+		keyPointsOfPath.push_back(samplingPoints[*it]);
+	}
+/*-------------------------------start------------------------------*/
+	testKeyPoints = keyPointsOfPath;
+/*-------------------------------end------------------------------*/
+	double time1 =ros::Time::now().toSec();
+
+	std::vector<Point> cubicSplinePoints;
+
+	if(keyPointsOfPath.empty())
+		return cubicSplinePoints;
+
+	std::vector<double> x;
+	std::vector<double> y;
+	for(auto it = keyPointsOfPath.begin(); it != keyPointsOfPath.end(); ++it)
+	{
+		x.push_back(it->x);
+		y.push_back(it->y);
+	}
+
+	std::vector<SplineSet> cs = spline(x, y);printf("gegge\n");
+
+	int index=0;
+	for(int i = 0; i < cs.size(); ++i)
+    {
+    	float spline_x = x[i];// + delta_s;
+    	while(spline_x < m_lanePoints[lanePointsIndex[i+1]].x)
+    	{
+    		// Point p = getUnitNormalVector(lanePointsIndex[index]);
+    		float spline_y =   cs[i].a 
+    					     + cs[i].b*(spline_x-cs[i].x)
+    					     + cs[i].c*pow(spline_x-cs[i].x, 2)
+    					     + cs[i].d*pow(spline_x-cs[i].x, 3);
+		    cubicSplinePoints.push_back(Point(spline_x,spline_y,0.0));
+		    spline_x += delta_s;
+    	}
+    }
+    double time2 =ros::Time::now().toSec();
+    printf("cubic: cost time: %f\n",(time2-time1)*1000.0);
+	return cubicSplinePoints;
+}
+
+std::vector<std::vector<Vertex>> ReferenceTrajectoryPlanning::generateSeeds(const std::vector<int>& lanePointsIndex)
+{
+	std::vector<std::vector<Vertex>> seeds;
+	if(lanePointsIndex.size() < 3)
+		return seeds;
+
+	samplingPoints.clear();
+
+	// m_seedsNum = 0;
+	int vertexIndex = 0;
+	Vertex vStart(m_lanePoints[lanePointsIndex[0]], 0);
+	vStart.nodeIndex = vertexIndex++;//std::cout<<"n:"<<vStart.nodeIndex<<std::endl;
+	samplingPoints.push_back(m_lanePoints[lanePointsIndex[0]]);
+	std::vector<Vertex> v0;
+	v0.push_back(vStart);
+	seeds.push_back(v0);
+
+	int len = lanePointsIndex.size() - 1;//std::cout<<"l:"<<len<<std::endl;
+	for(int i=1; i<len; ++i)
+	{
+		seeds.push_back(lateralSeeding(m_lanePoints[lanePointsIndex[i]], vertexIndex, samplingPoints));
+	}
+
+	Vertex vGoal(m_lanePoints[lanePointsIndex.back()], 0);
+	vGoal.nodeIndex = vertexIndex++;//std::cout<<"n:"<<vGoal.nodeIndex<<std::endl;
+	samplingPoints.push_back(m_lanePoints[lanePointsIndex.back()]);
+	std::vector<Vertex> v2;
+	v2.push_back(vGoal);
+	seeds.push_back(v2);
+
+/*-------------------------------start----------------------------------*/
+	testSeeds = seeds;
+/*-------------------------------end------------------------------------*/
+	return seeds;
+}
+
+std::vector<Vertex> ReferenceTrajectoryPlanning::lateralSeeding(const Point& point, int& index, std::vector<Point>& _samplingPoints)
+{
+	std::vector<Vertex> seeds;
+	for(int i = lateralSamplingNum; i > 0; --i)
+	{
+		float x   = point.x+i*lateralSamplingResolution*sin(point.yaw);
+		float y   = point.y-i*lateralSamplingResolution*cos(point.yaw);
+		float yaw = point.yaw;
+		Vertex vertex(x,y,yaw,-i);
+		_samplingPoints.push_back(Point(x,y,yaw));
+		vertex.nodeIndex = index++;
+		seeds.push_back(vertex);
+	}
+
+	Vertex v(point.x,point.y,point.yaw,0);
+	_samplingPoints.push_back(Point(point.x,point.y,point.yaw));
+	v.nodeIndex = index++;
+	seeds.push_back(v);
+
+	for(int i = 1; i <= lateralSamplingNum; ++i)
+	{
+		float x   = point.x-i*lateralSamplingResolution*sin(point.yaw);
+		float y   = point.y+i*lateralSamplingResolution*cos(point.yaw);
+		float yaw = point.yaw;
+		Vertex vertex(x,y,yaw,i);
+		_samplingPoints.push_back(Point(x,y,yaw));
+		vertex.nodeIndex = index++;
+		seeds.push_back(vertex);
+	}
+	return seeds;
+}
+
+Point ReferenceTrajectoryPlanning::getUnitNormalVector(const Point& point)
+{
+	float y = point.x / sqrt(pow(point.x, 2) + pow(point.y, 2));
+	float x = point.y / sqrt(pow(point.x, 2) + pow(point.y, 2));
+	float yaw = point.yaw + M_PI/2;
+
+	if(0<=yaw && yaw<M_PI/2 )
+		return Point(x,y,yaw);
+	if(M_PI/2 <= yaw && yaw<M_PI)
+		return Point(-x,y,yaw);
+	if(M_PI<=yaw && yaw <= M_PI*1.5)
+		return Point(-x,-y,yaw-2*M_PI);
+	if(yaw>2*M_PI)
+		return Point(x,-y,yaw-2*M_PI);
+}
