@@ -1,0 +1,9 @@
+#pragma once
+
+#include "common.h"
+
+std::tuple<thz::Point32, thz::Point32> carModel(const thz::Point32& point, thz::Polygon &polygon, const AstarDwaConfig& config);
+bool IsInsideFootprint(const thz::Point32& point, thz::Polygon &bounding_polygon);
+bool reachGoal(VehicleState curVehicleState, VehicleState goalVehicleState);
+float radianToDegree(float radian);
+float degreeToRadian(float degree);
