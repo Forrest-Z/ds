@@ -1,0 +1,116 @@
+#include <assert.h> 
+#include "collision_check.h"
+#include "functions.h"
+
+CollisionCheck::CollisionCheck(AstarDwaConfig* config, SortedObstacleMap* obstacles)
+:m_config(config), m_obstacles(obstacles)
+{
+	assert(m_config); 
+
+}
+
+CollisionCheck::~CollisionCheck()
+{
+	//TODO
+}
+
+bool CollisionCheck::collisionDetection(std::vector<thz::Point32> trajectory)
+{
+	if (!m_obstacles || m_obstacles->empty())
+		return false;
+
+	for (auto trajectoryPoint : trajectory)
+	{
+		if(checkCollision(trajectoryPoint))
+			return true;
+	}
+
+	return false;
+}
+
+bool CollisionCheck::collisionDetection(std::vector<VehicleState>& vehicleStates)
+{
+	if (!m_obstacles || m_obstacles->empty() || vehicleStates.empty())
+		return false;
+
+	for (auto temp_vs : vehicleStates)
+	{
+		thz::Point32 tempPoint(temp_vs.x, temp_vs.y, temp_vs.heading);
+		if(checkCollision(tempPoint))
+			return true;
+	}
+	return false;
+}
+
+int CollisionCheck::collisionDetection(const std::vector<VehicleState>& vehicleStates, const VehicleState& goalVehicleState, bool& flagGoalReached_)
+{
+	if (!m_obstacles || m_obstacles->empty() || vehicleStates.empty())
+	{
+		return 0;
+	}
+
+	for (auto temp_vs : vehicleStates)
+	{
+		flagGoalReached_ = reachGoal(temp_vs, goalVehicleState);
+		if (true == flagGoalReached_)
+			return 0;   
+
+		thz::Point32 tempPoint(temp_vs.x, temp_vs.y, temp_vs.heading);
+		if(checkCollision(tempPoint))
+			return 1;
+	}
+
+	VehicleState braking_vs = vehicleStates.back();
+
+	for (float bb = 1.0; bb <= 5.0; bb += 1.0)
+	{
+		thz::Point32 point;
+		point.x = braking_vs.x + bb * cos(braking_vs.heading);
+		point.y = braking_vs.y + bb * sin(braking_vs.heading);
+		point.heading = braking_vs.heading;
+
+		if(checkCollision(point))
+			return 2;
+	}
+
+	return 0;
+}
+
+bool CollisionCheck::checkCollision(thz::Point32& point)
+{
+	if(!m_obstacles)
+		return false;
+
+	thz::Point32 minimumXY, maximumXY;
+	thz::Polygon rectangleOfApproximateCar;
+	std::tie(minimumXY, maximumXY) = carModel(point, rectangleOfApproximateCar, *m_config);
+
+	auto obstaclesWithSameX = m_obstacles->lower_bound(minimumXY.x);
+
+	if (!m_obstacles->count(obstaclesWithSameX->first) || obstaclesWithSameX->first > maximumXY.x)
+	{
+		return false;
+	}
+	else
+	{
+		for (; obstaclesWithSameX->first <= maximumXY.x && obstaclesWithSameX != m_obstacles->end(); ++obstaclesWithSameX)
+		{
+			auto obstaclePoint = (*m_obstacles)[obstaclesWithSameX->first].lower_bound(minimumXY);
+			if (!(*m_obstacles)[obstaclesWithSameX->first].count(*obstaclePoint) || (*obstaclePoint).y > maximumXY.y)
+			{
+				continue;
+			}
+			else
+			{
+				for (; (*obstaclePoint).y <= maximumXY.y && obstaclePoint != (*m_obstacles)[obstaclesWithSameX->first].end(); ++obstaclePoint)
+				{
+					if (IsInsideFootprint(*obstaclePoint, rectangleOfApproximateCar))
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+	return false;
+}
