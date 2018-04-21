@@ -1,0 +1,460 @@
+#include "astar_dwa.h"
+#include "functions.h"
+#include "dubins.h"
+#include <tf/transform_broadcaster.h>
+#include <geometry_msgs/Point32.h>
+#include "hermite_curve.h"
+
+AstarDwa::AstarDwa()
+{
+    controlCycle = 0.9;
+    m_obstacle = std::unique_ptr<Obstacle>(new Obstacle(&m_config));
+    m_collisionCheck = std::unique_ptr<CollisionCheck>(new CollisionCheck(&m_config, &m_obstacle->m_dilatedObstacles));
+
+    startState.x = 0.0;
+    startState.y = 0.0;
+    startState.heading = degreeToRadian(0.0);
+    startState.linearVelocity = 0.0;
+    startState.angularVelocity = 0.0;
+
+    goalState.x = 4.0;
+    goalState.y = 0.0;
+    goalState.heading = degreeToRadian(0.0);
+    goalState.angularVelocity = degreeToRadian(0.0);
+    goalState.linearVelocity = 0.0;
+
+    m_config.kinematic.centrifugal_acceleration = 1.0;
+    m_config.kinematic.max_linear_velocity = 2.0;
+    m_config.kinematic.max_linear_acceleration = 1.0;
+    m_config.kinematic.min_turn_radius = 1.2;
+    for (int i = 0; i <= 20; ++i)
+    {
+        samplenum.emplace(i, i);
+    }
+}
+
+AstarDwa::~AstarDwa()
+{
+    //TODO
+}
+
+thz::Path AstarDwa::pathInterface(thz::Point32& carPosition, thz::Path& currentPath, thz::Path& rawPath)
+{
+    //carPosition is not been used
+
+    if (m_obstacle->m_dilatedObstacles.empty() || rawPath.points.size() < 10)
+        return currentPath;
+
+    thz::Path bestPath;
+    std::vector<int> multipleGoalsIndexArray;
+
+    // getMultipleGoals(multipleGoalsIndexArray, rawPath);
+
+    startState.x = 0.0;
+    startState.y = 0.0;
+    startState.heading = 0.0;
+    startState.linearVelocity = 0.4;
+    startState.angularVelocity = 0.0;
+
+    int goalIndex = rawPath.points.size() - 1;
+    // ROS_INFO("%D,,,,",goalIndex);
+    std::cout<<",,,,"<<goalIndex<<std::endl;
+    
+    // for (auto goalIndex : multipleGoalsIndexArray)
+    // {
+        goalState.x                = rawPath.points.at(goalIndex).x;
+        goalState.y                = rawPath.points.at(goalIndex).y;
+        goalState.heading          = rawPath.points.at(goalIndex).heading * M_PI / 180.0;
+        goalState.linearVelocity   = 2.0;
+        goalState.angularVelocity  = 0.0;
+
+        bool                                    flagGoalReached;
+        VehicleState                            stateCloseToGoal;
+        std::vector<VehicleState>               keyNodesOfBestPath;
+        UnorderedMap<VehicleState>              closeList;
+        UnorderedMap<std::vector<VehicleState>> pathHashMap;
+        UnorderedMap<float>        cost_so_far;
+
+        stateCloseToGoal = dynamicWindowApproach(closeList, pathHashMap,flagGoalReached,cost_so_far);
+        keyNodesOfBestPath = reconstructPath(startState, goalState, closeList, stateCloseToGoal);
+
+
+        if (true == flagGoalReached)
+        {
+            for (int i = 0; i < keyNodesOfBestPath.size(); ++i)
+            {
+                for (auto val : pathHashMap[keyNodesOfBestPath.at(i)])
+                {
+                    pathUpdate(bestPath, val);
+                }
+            }
+        }
+        // else
+        // {
+	       //  if(!connectTheGapToGoal(bestPath, pathHashMap, keyNodesOfBestPath,goalState))
+        //         continue;
+        // }
+
+    // }
+    return bestPath;
+}
+
+bool AstarDwa::connectTheGapToGoal(thz::Path &bestPath, UnorderedMap<std::vector<VehicleState>> &pathHashMap, std::vector<VehicleState> keyNodesOfBestPath,VehicleState goalState)
+{
+    tf::Quaternion tfquater;
+    geometry_msgs::Point32 st, gt;
+    geometry_msgs::Pose start_pose, end_pose;
+    std::vector<thz::Point32> link_curve;
+    auto backpt = pathHashMap[keyNodesOfBestPath.back()].back();
+    if (std::hypot(backpt.x - goalState.x, backpt.y - goalState.y) > 2.0)
+        return false;
+    st.x = backpt.x;
+    st.y = backpt.y;
+    st.z = backpt.heading;
+    start_pose.position.x = backpt.x;
+    start_pose.position.y = backpt.y;
+    start_pose.orientation = tf::createQuaternionMsgFromYaw(backpt.heading);
+    gt.x = goalState.x;
+    gt.y = goalState.y;
+    gt.z = goalState.heading;
+    end_pose.position.x = goalState.x;
+    end_pose.position.y = goalState.y;
+    end_pose.orientation = tf::createQuaternionMsgFromYaw(goalState.heading);
+
+    // functions::arcpath(st, gt, link_curve);
+    std::vector<geometry_msgs::Pose> raw_path;
+    raw_path = generatecurve::generateHermiteCurveForROS(start_pose, end_pose, 2.0);
+    for (auto a : raw_path)
+    {
+        thz::Point32 tmp;
+        tmp.x = a.position.x;
+        tmp.y = a.position.y;
+        tf::quaternionMsgToTF(a.orientation, tfquater);
+        tmp.heading = tf::getYaw(tfquater);
+        link_curve.push_back(tmp);
+    }
+
+    m_config.vehicle.front_overhang = 1.3;
+    m_config.vehicle.back_overhang = 0.5;
+    m_config.vehicle.half_wheeltrack = 0.7;
+    bool collidflag = m_collisionCheck->collisionDetection(link_curve);
+    if (false == collidflag)
+    {
+        for (int i = 0; i < keyNodesOfBestPath.size(); ++i)
+        {
+            for (auto val : pathHashMap[keyNodesOfBestPath.at(i)])
+            {
+                pathUpdate(bestPath, val);
+            }
+        }
+        for (auto val : link_curve)
+        {
+            pathUpdate(bestPath, val);
+        }
+    }
+    return true;
+}
+
+template <typename T>
+void AstarDwa::pathUpdate(thz::Path& path, T& point)
+{
+    thz::Point32 temp;
+    temp.x = point.x;
+    temp.y = point.y;
+    temp.heading = point.heading * 180.0 / M_PI;
+    temp.velocity = -88.0;
+    path.points.push_back(temp);
+}
+
+void AstarDwa::getMultipleGoals(std::vector<int> &goalsIndexArray, const thz::Path& path)
+{
+	float dis = 0.0;
+    float totaldis = 0.0;
+    std::vector<int> roadSegId;
+
+    for (int i = 0; i < path.points.size() - 2; ++i)
+    {
+        float tempdis = 0.0;
+        tempdis = std::hypot(path.points.at(i + 1).x - path.points.at(i).x, path.points.at(i + 1).y - path.points.at(i).y);
+        totaldis += tempdis;
+        if (totaldis < 5.0)
+        {
+            continue;
+        }
+        dis += tempdis;
+        if (dis > 1.0)
+        {
+            roadSegId.push_back(i);
+            dis = 0.0;
+        }
+    }
+    const int chip_num = 4;
+    int chip_size = roadSegId.size() / (chip_num - 1);
+    if (chip_size <= 1)
+    {
+        chip_size = 2;
+    }
+
+    goalsIndexArray.clear();
+    int chip_pos = 0;
+    // while(chip_pos < roadSegId.size())
+    // {
+    //     // goalsIndexArray.push_back(roadSegId.at(chip_pos));
+    //     chip_pos += chip_size;
+    // }
+    goalsIndexArray.push_back(roadSegId.at(path.points.size() - 1));
+
+}
+
+std::vector<VehicleState> AstarDwa::reconstructPath(VehicleState start, VehicleState goal,
+    UnorderedMap<VehicleState> &closeList, VehicleState last)
+{
+    std::vector<VehicleState> path;
+    VehicleState current = last;
+    path.push_back(current);
+    while (!(current == start))
+    {
+        current = closeList[current];
+        path.push_back(current);
+    }
+    //   path.push_back(start);
+    std::reverse(path.begin(), path.end());
+    //   path.push_back(goal);
+    return path;
+}
+
+float AstarDwa::gValUpdate(VehicleState cur, VehicleState next)
+{
+    float gval = 0.0;
+    gval = fabs(next.linearVelocity) * controlCycle;
+    return gval;
+}
+
+//This H-value updating function bind the dubins_curve and the reeds_shepp as hValUpdate!!!
+float AstarDwa::hValUpdate(VehicleState cur, VehicleState goal)
+{
+    float hvalue = 0.0;
+    float circle_radius = 2.0;//functions::radius;
+    geometry_msgs::Point32 p1, p2;
+    std::vector<geometry_msgs::Point32> arr;
+    p1.x = cur.x;
+    p1.y = cur.y;
+    p1.z = cur.heading;
+    p2.x = goal.x;
+    p2.y = goal.y;
+    p2.z = goal.heading;
+    double q0[3] = {cur.x, cur.y, cur.heading};
+    double q1[3] = {goal.x, goal.y, goal.heading};
+    auto cb = [](double q[3], double x, void *user_data) -> int {
+        return 1;
+    };
+
+    dubins_curve::DubinsPath dubins_path;
+    dubins_curve::dubins_init(q0, q1, circle_radius, &dubins_path);
+    dubins_curve::dubins_path_sample_many(&dubins_path, cb, 0.2, nullptr);
+    hvalue = dubins_curve::dubins_path_length(&dubins_path);     
+
+    return hvalue;
+}
+
+std::vector<std::tuple<VehicleState, std::vector<VehicleState>, float>>
+AstarDwa::generateTrajectory(VehicleState currentvs)
+{
+    float stepsize = 0.15;
+    // linear_velocity, angular_velocity, and G cost
+    std::vector<std::tuple<float, float, float>> speedArray;
+    std::vector<std::tuple<VehicleState, std::vector<VehicleState>, float>> trajectories;
+
+    dwaSpeedsSampling(currentvs, speedArray);
+
+    /**The trajectory samping process**/
+    for (auto spd : speedArray)
+    {
+        std::vector<VehicleState> path;
+        VehicleState tempvs = currentvs;
+        path.push_back(tempvs);
+
+        tempvs.linearVelocity = std::get<0>(spd);
+        tempvs.angularVelocity = std::get<1>(spd);
+
+        int diffnum = fabs(static_cast<int>(tempvs.linearVelocity * controlCycle / stepsize));
+        float timestep = fabs(stepsize / tempvs.linearVelocity);
+
+        for (int a = 0; a < diffnum; ++a)
+        {
+            /* Vehicle state sampling */
+            /* A little bug causes great pain !!! */
+            if (fabs(tempvs.angularVelocity) < 1e-2)
+            {
+                tempvs.x += tempvs.linearVelocity * timestep * cos(tempvs.heading);
+                tempvs.y += tempvs.linearVelocity * timestep * sin(tempvs.heading);
+            }
+            else
+            {
+                //@brief refer to the <<Probabilistic robotics>>, table 5.3, 5.9
+                tempvs.heading += tempvs.angularVelocity * timestep;
+                tempvs.x += (tempvs.linearVelocity / tempvs.angularVelocity) *
+                (sin(tempvs.heading + tempvs.angularVelocity * timestep) - sin(tempvs.heading));
+                tempvs.y += (tempvs.linearVelocity / tempvs.angularVelocity) *
+                (-cos(tempvs.heading + tempvs.angularVelocity * timestep) + cos(tempvs.heading));
+            }
+            path.push_back(tempvs);
+        }
+        // trajectorys.push_back(path);
+        trajectories.emplace_back(std::forward_as_tuple(path.back(), path, std::get<2>(spd)));
+    }
+
+    return trajectories;
+}
+
+void AstarDwa::dwaSpeedsSampling(VehicleState currentvs, std::vector<std::tuple<float, float, float>> &speedArray)
+{
+    // if (REVERSE)
+        // reverseSpeedSampling(currentvs, speedArray);
+    // else
+        forwardSpeedSampling(currentvs, speedArray);
+}
+
+
+void AstarDwa::forwardSpeedSampling(VehicleState currentvs, std::vector<std::tuple<float, float, float>> &speedArray)
+{
+    VehicleState subsequentState = currentvs;
+
+    int   angular_num = 4;
+    int   speed_num = 1; //n
+    float angular_sample = 0.0;
+    float speed_sample = 0.0; //n
+    float acceleration_coefficient = 0.3; //n
+    float linear_velocity, angular_velocity;
+
+    controlCycle = 0.9;
+    speed_num = samplenum[1];
+    speed_sample = acceleration_coefficient * m_config.kinematic.max_linear_acceleration * controlCycle / speed_num;
+    for (int i = speed_num; i >= -speed_num; i += -1)
+    {
+        linear_velocity = currentvs.linearVelocity + speed_sample * i;
+        if (linear_velocity < (startState.linearVelocity - 1e-2) || linear_velocity > (goalState.linearVelocity + 1e-2))
+        {
+            continue;
+        }
+        // if (linear_velocity < 0.4 || linear_velocity > 2.0)
+        // {
+        //     continue;
+        // }
+
+        m_config.kinematic.max_angular_velocity = fabs(linear_velocity) / m_config.kinematic.min_turn_radius;
+        if (fabs(linear_velocity * m_config.kinematic.max_angular_velocity) > (m_config.kinematic.centrifugal_acceleration + 1e-3))
+        {
+            m_config.kinematic.max_angular_velocity = m_config.kinematic.centrifugal_acceleration / linear_velocity;
+        }
+        if (linear_velocity <= 0.5)
+        {
+            angular_num = samplenum[2];
+        }
+        else if (linear_velocity <= 2.0)
+        {
+            angular_num = samplenum[3];
+        }
+        else
+        {
+            angular_num = samplenum[4];
+        }
+
+        angular_sample = m_config.kinematic.max_angular_velocity / angular_num;
+        for (int j = -angular_num; j <= angular_num; ++j)
+        {
+            /*The left side has higher priority*/
+            angular_velocity = currentvs.angularVelocity - angular_sample * j;
+            if (fabs(angular_velocity) < 1e-2)
+            {
+                angular_velocity = 0.0;
+            }
+            if (fabs(angular_velocity) > (m_config.kinematic.max_angular_velocity + 1e-3))
+            {
+                continue;
+            }
+            subsequentState.linearVelocity = linear_velocity;
+            subsequentState.angularVelocity = angular_velocity;
+            speedArray.emplace_back(
+                std::forward_as_tuple(
+                linear_velocity, angular_velocity, gValUpdate(currentvs, subsequentState)));
+        }
+
+    }
+}
+
+VehicleState AstarDwa::dynamicWindowApproach(UnorderedMap<VehicleState> &closeList,
+    UnorderedMap<std::vector<VehicleState>> &pathHashMap, bool& flagGoalReached_,UnorderedMap<float> &cost_so_far)
+{
+    flagGoalReached_ = false;
+
+    int remark = 0;
+    
+    m_config.vehicle.front_overhang        = 1.3;
+    m_config.vehicle.back_overhang                 = 0.5;
+    m_config.vehicle.half_wheeltrack               = 0.7;
+    m_config.kinematic.max_linear_velocity = goalState.linearVelocity;//config
+
+    VehicleState current;
+    PriorityNode<VehicleState, float> openList;
+    openList.elements.emplace(startState, 0.0);
+    closeList[startState] = startState;
+    cost_so_far[startState] = 0.0;
+
+    while (!openList.elements.empty())
+    {
+        current = openList.elements.top().first;
+        openList.elements.pop();      
+
+        int collisionflag = m_collisionCheck->collisionDetection(pathHashMap[current], goalState, flagGoalReached_);
+        if (1 == collisionflag)
+            continue;
+
+        if (remark >= 200 || true == flagGoalReached_)
+            break;
+
+        updateOpenList(current,goalState,pathHashMap,collisionflag,openList,closeList,cost_so_far);
+        
+        remark++;
+    }
+
+    return current;
+}
+
+void AstarDwa::updateOpenList(VehicleState &current, VehicleState goal,UnorderedMap<std::vector<VehicleState>> &pathHashMap, int &collisionflag,
+    PriorityNode<VehicleState, float> &openList, UnorderedMap<VehicleState> &closeList,UnorderedMap<float> &cost_so_far)
+{
+    for (auto next : generateTrajectory(current))
+    {
+        //Compare the algorithm efficiency!!!
+        auto nextpath = std::get<1>(next);
+        VehicleState nextvs = std::get<0>(next);
+        float new_cost = cost_so_far[current] + std::get<2>(next);
+        new_cost = 0.0;
+
+        // Only if the successor is not in the close table
+        if (!closeList.count(nextvs))
+        {
+            // If the successor is not in the open table, If the successor is in the open table
+            if (!cost_so_far.count(nextvs) || ((new_cost + 1e-1) < cost_so_far[nextvs]))
+            {
+                float temph = hValUpdate(nextvs, goal);
+                /*Explore the unknown world and step back*/
+                if ( 2 == collisionflag)
+                {
+                    temph += 1.2 * std::get<2>(next);
+                }
+                float priority = new_cost + temph;
+                openList.elements.emplace(nextvs, priority);
+                cost_so_far[nextvs] = new_cost;
+                closeList[nextvs] = current;
+                pathHashMap[nextvs] = nextpath;
+            }
+        }
+    }
+}
+
+void AstarDwa::obstacleUpdate(std::vector<thz::Point32> &obstacles)
+{
+    m_obstacle->obstacleUpdate(obstacles);
+}
