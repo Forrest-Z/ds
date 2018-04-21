@@ -1,0 +1,73 @@
+#include "obstacle.h"
+#include "functions.h"
+
+Obstacle::Obstacle(AstarDwaConfig* config):m_config(config)
+{
+	assert(m_config); 
+}
+
+Obstacle::~Obstacle()
+{
+    //TODO
+}
+
+void Obstacle::obstacleUpdate(std::vector<thz::Point32> &obstaclePoints)
+{
+    thz::Polygon poly;
+    thz::Point32 carPosition(-0.1, 0.0, 0.0);
+    carModel(carPosition, poly, *m_config);
+
+    for (auto obstaclePoint : obstaclePoints)
+    {
+        float distanceBetweenCarAndObs = std::hypot(obstaclePoint.x, obstaclePoint.y);
+        if (distanceBetweenCarAndObs > 12.0)
+            continue ;
+        else
+        {
+            nearestObstaclesInsert(obstaclePoint);
+            if (true == IsInsideFootprint(obstaclePoint, poly))
+                continue ;
+            rawObstaclesInsert(obstaclePoint);
+            dilatedObstaclesInsert(obstaclePoint, distanceBetweenCarAndObs);
+        }
+    }
+}
+
+void Obstacle::nearestObstaclesInsert(thz::Point32 point)
+{
+	if (m_nearestObstacles[point.x].count(point))
+    	return ;
+    m_nearestObstacles[point.x].insert(point);
+}
+
+void Obstacle::rawObstaclesInsert(thz::Point32 point)
+{
+	if (m_rawObstacles[point.x].count(point))
+    	return ;
+    m_rawObstacles[point.x].insert(point);
+}
+
+void Obstacle::dilatedObstaclesInsert(thz::Point32 point, const float& distance)
+{
+	if (m_dilatedObstacles[point.x].count(point))
+    	return ;
+
+    m_dilatedObstacles[point.x].insert(point);
+    if (distance > 2.0)
+    {
+        for (int i = -1; i <= 1; i += 2)
+        {
+            std::cout<<"obs size "<<m_dilatedObstacles.size()<<std::endl;
+            for (int j = -1; j <= 1; j += 2)
+            {
+                std::cout<<"obs size "<<m_dilatedObstacles.size()<<std::endl;
+            	thz::Point32 pointTemp(point.x + 0.1 * i, point.y + 0.1 * j, 0.0);
+                if (!m_dilatedObstacles[pointTemp.x].count(pointTemp))
+                {
+                    m_dilatedObstacles[pointTemp.x].insert(pointTemp);
+                }
+            }
+        }
+    }
+    std::cout<<"obs size "<<m_dilatedObstacles.size()<<std::endl;
+}
