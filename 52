@@ -1,21 +1,1062 @@
 /*************************************************************************
-	> File Name: main.cpp
+	> File Name: objectSimulation.cpp
 	> Author: 
 	> Mail: 
-	> Created Time: 2017年11月18日 星期六 18时32分36秒
+	> Created Time: 2017年11月18日 星期六 19时36分37秒
  ************************************************************************/
 
+
 #include<iostream>
+#include <boost/concept_check.hpp>
 #include "objectSimulation.h"
 using namespace std;
 
-int main(int argc, char** argv)
+
+objectSimulation::objectSimulation(ros::NodeHandle nh)
 {
-   ros::init(argc,argv,"ivobjectSimulation");   
-   ros::NodeHandle mh;
-   objectSimulation node(mh);
-   node.run();
-   cout << "objectSimulation over"<<endl;
-   return 0;
+    gnh = nh;
+	gnh.setParam("sim_action", 0);
+    nh.param("Target_ID",gConfig.Target_ID,gConfig.Target_ID);
+    nh.param("function",gConfig.function,gConfig.function);
+    nh.param("sim_x",gConfig.x,gConfig.x);
+    nh.param("sim_R_x",gConfig.R_x,gConfig.R_x);
+    nh.param("sim_y",gConfig.y,gConfig.y);
+    nh.param("sim_R_y",gConfig.R_y,gConfig.R_y);
+    nh.param("sim_v",gConfig.v,gConfig.v);
+    nh.param("sim_R_v",gConfig.R_v,gConfig.R_v);
+    nh.param("sim_acceleration_selection",gConfig.acceleration_selection,gConfig.acceleration_selection);
+    nh.param("sim_a",gConfig.a,gConfig.a);
+    nh.param("sim_auto_scceleration",gConfig.auto_scceleration,gConfig.auto_scceleration);
+    nh.param("sim_cycle_time",gConfig.cycle_time,gConfig.cycle_time);
+    nh.param("sim_Range",gConfig.range,gConfig.range);
+    nh.param("sim_action",gConfig.action,gConfig.action);
+
+
+	nh.getParam("iabasemaptllon",TLgps.lon);
+	nh.getParam("iabasemaptllat",TLgps.lat);
+	double gicsCellSize = 0.05;
+	nh.param("gicscellsize",gicsCellSize,gicsCellSize);
+    TLgps.heading = 90;
+    mgeoTool.initParam(TLgps,gicsCellSize);
+
+	
+	
+
+    gConfig.isConfigureOK = false;
+    gConfig.T = 0;
+
+
+    gConfigVec.push_back(gConfig);
+    perception_msgs::objfus obj;
+    obj.id = gConfig.Target_ID;
+    obj.x = gConfig.x;
+    obj.y = gConfig.y;
+    obj.vxrel = gConfig.v;
+    //objs.objs.push_back(obj);
+	
+	sObj_conf firstObj;
+	firstObj.id = gConfig.Target_ID;
+	firstObj.x = gConfig.x;
+	firstObj.y = gConfig.y;
+	firstObj.v = gConfig.v;
+	firstObj.dynamicConfig = gConfig;
+	firstObj.runDis = 0.0;
+	obj_confVec.push_back(firstObj);
+
+	
+	cout << "init sub_gps"<<endl;
+	sub_gps = nh.subscribe ( "ivsensorgps", 1, &objectSimulation::get_gps, this );
+    sub_path = nh.subscribe ( "ivmotionplanner", 1, &objectSimulation::get_motionPath, this );
+    sub_locpos = nh.subscribe ( "ivmaplocpos",1,&objectSimulation::subCallback_locpos,this ); 
+	sub_act = nh.subscribe ( "ivactuator", 1000, &objectSimulation::get_act, this );
+	sub_mapvap = nh.subscribe ( "ivmapvap", 1000, &objectSimulation::get_mapvap, this );
+    pub_obj = nh.advertise < perception_msgs::ivmsgobjfus > ( "ivobjectfusion", 1000  );
+    pub_objDebug = nh.advertise < ivobject_simulation::objectDebug > ( "ivobjectDebug", 1000  );
+
+	gps.isvalid = false;
+	path.isvalid = false;
+	act.isvalid = false;
+	
+	checkSumDis = 0.0;
+	gpsSumDis = 0.0;
+	locposdis = 0.0;
+	lastxg = 0.0;
+	lastyg = 0.0;
+	lastobjxg = 0.0;
+	lastobjyg = 0.0;
+	isgpsvalid = false;
+	objectDebug.dis = 0.0;
+    objectDebug.v = 0.0;
+	gnh.setParam("sim_action", 0);
+	
+	lastPathDis = 100;
+	cout << "init over"<<endl;
 }
+
+objectSimulation::~objectSimulation()
+{
+    gnh.setParam("sim_action", 0);
+}
+
+
+
+double objectSimulation::getHeadingFromDis(double dis)
+{
+    ivlocmsg::ivsensorgps roadgps;
+    float x = path.msg.points[0].x;
+    float y = path.msg.points[0].y;
+    double sumDis = 0.0;
+    for(int i = 0; i < path.msg.points.size(); i++)
+    {
+        float tmp = (path.msg.points[i].x - x)*(path.msg.points[i].x - x) + 
+            (path.msg.points[i].y - y)*(path.msg.points[i].y - y);
+        sumDis += sqrt(tmp);
+        x = path.msg.points[i].x;
+        y = path.msg.points[i].y;
+	    // roadgps = mgeoTool.GCCS2GPS(roadgps, x , y); 
+        if(sumDis >= dis)
+        {
+            break;
+        }
+    }
+	roadgps = mgeoTool.GCCS2GPS(gps.msg, x , y);
+    if(roadgps.heading > 360)
+        roadgps.heading -= 360;
+    if(roadgps.heading < 0)
+        roadgps.heading +=360;
+    return roadgps.heading;
+}
+
+
+double objectSimulation::getHeading()
+{
+    double totolDis = 0.0;
+    double minAngleDiff = 999999;
+    double resAngle = -1;
+    float x = path.msg.points[0].x;
+    float y = path.msg.points[0].y;
+    for(int i = 0; i < path.msg.points.size(); i++)
+    {
+		if(fabs(path.msg.points[i].angle) < minAngleDiff){
+			minAngleDiff = fabs(path.msg.points[i].angle);
+			resAngle = path.msg.points[i].angle;
+		}
+        /*
+        ivlocmsg::ivsensorgps roadgps = mgeoTool.GCCS2GPS(gps.msg, path.msg.points[i].x , path.msg.points[i].y);
+        double diff = roadgps.heading - gps.msg.heading;
+        //cout << "heading :" << roadgps.heading << "|" << gps.msg.heading << endl;
+        if(diff > 360)
+            diff -= ( (int)(diff/360) * 360);
+        else if(diff < 0)
+            diff += ((-(int)(diff/360)+1) * 360);
+
+        if(diff > 180)
+            diff = 360 - diff;
+        if(diff < minAngleDiff)
+        {
+            cout << "minAngleDiff------------------------------------ :" << diff<<endl;
+            minAngleDiff = diff;
+            resAngle = roadgps.heading;
+        }*/
+    }
+	 resAngle = gps.msg.heading - resAngle;
+    if(resAngle > 360)
+        resAngle -= ( (int)(resAngle/360) * 360);
+    else if(resAngle < 0)
+        resAngle += ((-(int)(resAngle/360)+1) * 360);
+
+    return resAngle;
+
+
+   /* double minddleDis = totolDis/2;
+    double heading = getHeadingFromDis(minddleDis);
+    
+    while(fabs(heading - gps.msg.heading) > 1)
+    {
+        cout << "minddleDis   :" << minddleDis << "|" << heading << endl;
+        minddleDis = minddleDis-1;
+        if(minddleDis < 0.01)
+            break;
+        heading = getHeadingFromDis(minddleDis);
+    }
+    return heading;*/
+
+}
+
+
+
+double objectSimulation::getDiffAngle(double angle1, double angle2)
+{
+
+    double diff = angle1 - angle2;
+    if(diff > 360)
+        diff -= ( (int)(diff/360) * 360);
+    else if(diff < 0)
+        diff += ((-(int)(diff/360)+1) * 360);
+
+    if(diff > 180)
+        diff = 360 - diff;
+    return diff;
+}
+
+
+bool FirstInPath = true;
+float timmer = 0;
+float preDis = 0;
+void objectSimulation::get_motionPath(const ivpathplanner::ivmsgpath::ConstPtr& msg)
+{
+    isgpsvalid = true;
+	path.msg = (*msg);
+	path.isvalid = true;
+	ros::NodeHandle nh;
+	int action_num = -1;
+	gnh.getParam("sim_action", action_num);
+	if(action_num == 0){
+		PathRevTime = ros::Time::now();
+		return;
+	}
+    if(FirstInPath)
+    {
+        FirstInPath = false;
+		locposdis = 0;
+        PathRevTime = ros::Time::now();
+		lastxg = (*msg).points[0].xg;
+		lastyg = (*msg).points[0].yg;
+        return;
+    }
+    if((*msg).points.size() == 0) return;
+    if(gps.isvalid == false) return;
+	
+	
+    self_v = (*msg).points[1].velocity; //10
+	//self_v = 4;
+    gnh.setParam("cur_sim_actspeed", self_v);
+	gnh.setParam("cur_sim_velocity", self_v);
+
+    //self_v = 1;
+    float inner_t = ( ros::Time::now()- PathRevTime  ).toSec();
+    //float inner_t = 0.05;
+    float dis = inner_t * self_v;
+	//for checkSumDis
+	sPointOfGCCS tmpPoint = mgeoTool.GPS2GCCS(initGps,gps.msg);
+	
+	checkSumDis += dis;
+	
+	timmer += inner_t;
+	if(timmer >= 1)
+	{
+		timmer = 0;
+		float persec = checkSumDis - preDis;
+		preDis = checkSumDis;
+		
+		 
+		locposdis = 0;
+	}
+	else
+	{
+		cout << "persecond  dis**********************" << inner_t << "|"<< self_v<< "|"<< dis<<endl;
+	}
+    //dis = 0.5;
+    
+    bool isget = false;
+	gnh.getParam("isover", isget);
+	float xg = lastxg;
+    float yg = lastyg;
+	/*if(isget == true)
+	{
+		xg = (*msg).points[0].xg;
+		yg = (*msg).points[0].yg;
+	}*/
+	
+    float sumDis = 0.0;
+    
+    float roadHeading = 0.0;
+	int j = 0;
+	for(int i = 0; i < (*msg).points.size(); i++)
+	{
+		if(fabs((*msg).points[i].xg - xg) <= 0.01 &&
+			fabs((*msg).points[i].yg - yg) <= 0.01
+		){
+			j = i;
+			break;
+		}
+	}
+	
+    for(int i = j+1; i < (*msg).points.size(); i++)
+    {
+	if(dis < 0.0001)
+		break;
+        float tmp = ((*msg).points[i].xg - xg)*((*msg).points[i].xg - xg) + 
+            ((*msg).points[i].yg - yg)*((*msg).points[i].yg - yg);
+			cout << "check   dis "<< sumDis<<"|" << tmp<< endl;
+        sumDis += sqrt(tmp);
+		
+        xg = (*msg).points[i].xg;
+        yg = (*msg).points[i].yg;
+		
+        if(sumDis >= dis)
+        {
+			cout << "check  heading "<< (*msg).points[i].angle << "|" << sumDis<<endl;
+            break;
+        }
+    }
+    cout << "persecond "<<yg << "|" << xg<<endl; 
+    lastyg = yg;
+	lastxg = xg;
+    cout << "inner_t   ******************  "<< inner_t << "|" << dis << xg << "|"<<yg<< endl;
+	//curgps = mgeoTool.GCCS2GPS(gps.msg, x , y);
+	curgps = mgeoTool.GCCS2GPS(TLgps, xg , yg);
+	cout << "check  xg|yg|lon|lat : "<< xg<< "|" << yg << "|" << curgps.lon << "|"<<curgps.lat <<endl;
+	
+    cout << "roadHeading : "<< roadHeading << endl;
+
+    curgps.heading = getHeading();
+    //if(getDiffAngle(curgps.heading, gps.msg.heading) > 1)
+        //curgps.heading = gps.msg.heading - roadHeading;
+    if(curgps.heading < 0)
+        curgps.heading += 360;
+    if(curgps.heading > 360)
+        curgps.heading -= 360;
+   
+	double angle = curgps.heading - 90;
+	if(angle < 0)
+        angle += 360;
+    if(angle > 360)
+        angle -= 360;
+    cout << "curgps.heading  "<< curgps.heading << "|" << gps.msg.heading<< endl;
+
+    
+    if(action_num != 0){
+		
+		nh.setParam("cur_sim_lon", curgps.lon);
+		nh.setParam("cur_sim_lat", curgps.lat);
+		nh.setParam("cur_sim_heading", curgps.heading);
+		
+		nh.setParam("cur_sim_xg", xg);
+		nh.setParam("cur_sim_yg", yg);
+		nh.setParam("cur_sim_angle", angle);
+    }
+    PathRevTime = ros::Time::now();
+}
+
+
+bool firstGetGps = false;
+void  objectSimulation::get_gps(const ivlocmsg::ivsensorgps::ConstPtr & msg)
+{
+	//cout << "get_gps  ing"<<endl;
+	gps.msg = (*msg);
+	gps.isvalid = true;
+	if(firstGetGps == false)
+	{
+		firstGetGps = true;
+		initGps = gps.msg;
+		lastGCCS = mgeoTool.GPS2GCCS(TLgps, gps.msg);
+		cout << "lastGCCS: "<< lastGCCS.xg << "|" << lastGCCS.yg << "|" << lastGCCS.angle<<endl;
+		cout << "check :initGps "<< initGps.lon << "|" << initGps.lat << "|" << initGps.heading<<endl;
+	}
+	sPointOfGCCS tmpPoint = mgeoTool.GPS2GCCS(initGps,gps.msg);
+	sPointOfGCCS tmpPoint1 = mgeoTool.GPS2GCCS(TLgps,gps.msg);
+	
+	gpsSumDis += sqrt(tmpPoint.xg*tmpPoint.xg + tmpPoint.yg*tmpPoint.yg);
+	
+	
+
+}
+
+
+
+
+
+void objectSimulation::get_mapvap(const ivmap::ivmapmsgvap::ConstPtr & msg)
+{
+	mapvap.msg = (*msg);
+	mapvap.isvalid = true;
+
+	//if(objs.objs.size() != 0){
+		/*objectDebug.dis = objs.objs[0].x;
+		objectDebug.relx = objs.objs[0].vxrel;
+		objectDebug.v = objs.objs[0].vxrel + mapvap.msg.v;*/
+		//objectDebug.vabs =  mapvap.msg.v;
+	//}
+   // pub_objDebug.publish(objectDebug);
+}
+
+
+
+
+
+bool isCallback_locpos = false;
+void objectSimulation::subCallback_locpos ( const ivmap::ivmapmsglocpos::ConstPtr &msg )
+{
+	if(fabs((*msg).xg) < 0.1 )
+		return;
+	if(isCallback_locpos == false)
+	{
+		isCallback_locpos = true;
+		curlocpos = *msg;
+		return;
+	}
+	double tempdis = sqrt((curlocpos.xg - (*msg).xg) *(curlocpos.xg - (*msg).xg) + 
+		(curlocpos.yg - (*msg).yg) *(curlocpos.yg - (*msg).yg));
+    locposdis += tempdis;
+	cout <<" persecond #################### "<< locposdis << "|" << curlocpos.xg << "|" <<curlocpos.yg<<endl;
+	
+    curlocpos = *msg;
+}
+
+
+
+
+void objectSimulation::get_act(const ivactuator::ivactuator::ConstPtr &msg)
+{
+	//cout << "get_act "<< endl;  
+	act.msg = (*msg);
+	act.isvalid = true;
+}
+
+
+
+void objectSimulation::getgConfig()
+{
+    int action = -1;
+    int ac_target_id = -1;
+    gnh.getParam("ac_click_num", action);
+    gnh.getParam("ac_target_id",ac_target_id);
+    gnh.param("Target_ID",gConfig.Target_ID,gConfig.Target_ID);
+    gnh.param("function",gConfig.function,gConfig.function);
+    gnh.param("sim_x",gConfig.x,gConfig.x);
+    gnh.param("sim_R_x",gConfig.R_x,gConfig.R_x);
+    gnh.param("sim_y",gConfig.y,gConfig.y);
+    gnh.param("sim_R_y",gConfig.R_y,gConfig.R_y);
+    gnh.param("sim_v",gConfig.v,gConfig.v);
+    gnh.param("sim_R_v",gConfig.R_v,gConfig.R_v);
+    gnh.param("sim_acceleration_selection",gConfig.acceleration_selection,gConfig.acceleration_selection);
+    gnh.param("sim_a",gConfig.a,gConfig.a);
+    gnh.param("sim_auto_scceleration",gConfig.auto_scceleration,gConfig.auto_scceleration);
+    gnh.param("sim_cycle_time",gConfig.cycle_time,gConfig.cycle_time);
+    gnh.param("sim_Range",gConfig.range,gConfig.range);
+    gnh.param("sim_action",gConfig.action,gConfig.action);
+    gConfig.isConfigureOK = false;
+    gConfig.T = 0;
+    bool isConfigure = false;
+	sPointOfGCCS CurRelPoint;
+	
+	
+	double min_dis = 9999;
+	double temp_dis = 0;
+	
+    switch(action)
+    {
+        case MENE_CONFIG_OK:
+            cout << "menue configure ok"<<endl;
+            gnh.getParam("configure", isConfigure);
+            if(isConfigure)
+            {
+				cout << "configure ing"<<endl;
+                for(int i = 0; i < obj_confVec.size(); i++)
+                {
+                    if(obj_confVec[i].id == ac_target_id)
+                    {
+                        gConfig.Target_ID = ac_target_id;
+                        gConfig.isConfigureOK = true;
+                        obj_confVec[i].dynamicConfig = gConfig;
+						obj_confVec[i].x = gConfig.x;
+						obj_confVec[i].y = gConfig.y;
+						obj_confVec[i].v = gConfig.v;
+						obj_confVec[i].moveState = -1;
+						if(gConfig.function == FUNC_CISD)
+							obj_confVec[i].moveState = 0;
+						cout << "id :" << ac_target_id << "|" << obj_confVec[i].x << "|" <<obj_confVec[i].y <<endl; 
+						
+						sPointOfVCS vcs;
+						vcs.x = obj_confVec[i].x;
+						vcs.y = obj_confVec[i].y;
+						sPointOfGCCS tempGccs;
+						tempGccs.xg = curlocpos.xg;
+						tempGccs.yg = curlocpos.yg;
+						tempGccs.angle = curlocpos.angle;
+						
+						obj_confVec[i].gccpoint = mgeoTool.VCS2GCCS(tempGccs, vcs );
+						
+						for(int j = 0; j < path.msg.points.size(); j++)
+						{
+							ivpathplanner::motionpoint motionpoint = path.msg.points[j];
+							temp_dis = (motionpoint.x - obj_confVec[i].x)*(motionpoint.x - obj_confVec[i].x) + 
+							(motionpoint.y - obj_confVec[i].y)*(motionpoint.y - obj_confVec[i].y);
+							if(temp_dis < min_dis)
+							{
+								min_dis = temp_dis;
+								obj_confVec[i].y_dis = motionpoint.y - obj_confVec[i].y;
+							}
+						}
+                        break;
+                    }
+                }
+            }
+            gnh.setParam("ac_click_num", -1);
+            break;
+        case MENE_DELETE: 
+            for(vector<sObj_conf>::iterator it = obj_confVec.begin(); it != obj_confVec.end(); )
+            {
+                if((*it).id == ac_target_id)
+                {
+                   it = obj_confVec.erase(it); 
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+            gnh.setParam("ac_click_num", -1);
+            break;
+        case MENE_ADDNEW:
+			sObj_conf temp_objConf;
+            gConfig.Target_ID = ac_target_id;
+			temp_objConf.dynamicConfig = gConfig;
+			temp_objConf.id = ac_target_id;
+			temp_objConf.x = gConfig.x;
+			temp_objConf.y = gConfig.y;
+			temp_objConf.v = gConfig.v;
+			sPoint2d temp;
+			temp.x = temp_objConf.x;
+			temp.y = temp_objConf.y;
+			sPoint2d onroadPoint = getClosestPoint(temp);
+			temp_objConf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg, onroadPoint.x,onroadPoint.y );
+			temp_objConf.runDis = 0.0;
+            obj_confVec.push_back(temp_objConf);
+            gnh.setParam("ac_click_num", -1);
+            break;
+    }
+    for(int i = 0; i < obj_confVec.size(); i++)
+    {
+        if(obj_confVec[i].id == ac_target_id)
+        {
+            gConfig.Target_ID = ac_target_id;
+            if(!gConfig.auto_scceleration)
+                obj_confVec[i].dynamicConfig.a = gConfig.a;
+            obj_confVec[i].dynamicConfig.auto_scceleration= gConfig.auto_scceleration;
+            obj_confVec[i].dynamicConfig.cycle_time = gConfig.cycle_time;
+            obj_confVec[i].dynamicConfig.range = gConfig.range; 
+            break;
+        }
+    }
+}
+
+
+
+
+
+void objectSimulation::generateA()
+{
+    for(int i = 0; i < obj_confVec.size(); i++)
+    {
+        if(obj_confVec[i].dynamicConfig.isConfigureOK)
+        {
+            /*if(obj_confVec[i].dynamicConfig.auto_scceleration)
+            {
+                obj_confVec[i].dynamicConfig.T += 0.05;
+                obj_confVec[i].dynamicConfig.a = obj_confVec[i].dynamicConfig.range * sin(3.1415926/180*obj_confVec[i].dynamicConfig.T);
+            }*/
+        }
+    }
+}
+
+
+void objectSimulation::generateV()
+{
+    for(int i = 0; i < obj_confVec.size(); i++)
+    {
+		obj_confVec[i].v += (obj_confVec[i].dynamicConfig.a*0.05);
+		if(obj_confVec[i].v < 0) 
+			obj_confVec[i].v = 0;
+		obj_confVec[i].dynamicConfig.v = obj_confVec[i].v;
+    }
+}
+
+
+
+sPoint2d objectSimulation::getClosestDis(double dis)
+{
+  int foundIndex = -1;
+  sPoint2d res;
+  for(int i = 0; i < path.msg.points.size(); i++)
+  {
+    ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+	if(i == 0)
+	{
+		continue; 
+	}
+   double inner_dis = sqrt((motionpoint.x - path.msg.points[i-1].x)*(motionpoint.x - path.msg.points[i-1].x) + 
+					(motionpoint.y - path.msg.points[i-1].y)*(motionpoint.y - path.msg.points[i-1].y));
+	dis -= inner_dis;
+	//cout << "state: dis:"<< dis << "|" << inner_dis << endl;
+    if(dis <= 0)
+    {
+      res.x = motionpoint.x;
+      res.y = motionpoint.y;
+	  break;
+    }
+  }
+
+	return res;
+  
+  
+}
+
+
+
+
+
+sPoint2d objectSimulation::getClosestPoint(sPoint2d point)
+{
+  double minDis = 999999;
+  int foundIndex = -1;
+  sPoint2d res;
+  for(int i = 0; i < path.msg.points.size(); i++)
+  {
+    ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+    double dis = (motionpoint.x - point.x)*(motionpoint.x - point.x) + 
+	(motionpoint.y - point.y)*(motionpoint.y - point.y);
+    if(dis < minDis)
+    {
+      minDis = dis;
+      res.x = motionpoint.xg;
+      res.y = motionpoint.yg;
+      foundIndex = i;
+    }
+  }
+  
+  return res;
+}
+
+
+void objectSimulation::forwardDis_FF(sObj_conf &obj_conf, double distance)
+{
+	double minDis = 999999;
+	int foundIndex = -1;
+	lastPathDis = 0;
+	for(int i = 0; i < path.msg.points.size(); i++)
+	{
+		ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+		double dis = (motionpoint.x - obj_conf.x)*(motionpoint.x - obj_conf.x) + 
+		(motionpoint.y - obj_conf.y)*(motionpoint.y - obj_conf.y);
+		
+		
+
+		if(dis < minDis)
+		{
+			minDis = dis;
+			foundIndex = i;
+			if(i > 0)
+			{
+				double m_innerdis =  sqrt((motionpoint.x - path.msg.points[i-1].x)*(motionpoint.x - path.msg.points[i-1].x) + 
+				(motionpoint.y - path.msg.points[i-1].y)*(motionpoint.y - path.msg.points[i-1].y));
+				lastPathDis += m_innerdis;
+			}
+		}
+	}
+
+	if(foundIndex == -1)  return;
+	if(distance < 0)
+	{
+		double sum_dis = 0;
+		for(int i = foundIndex; i > 0; i--)
+		{
+			ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+			double dis = sqrt((motionpoint.x - path.msg.points[foundIndex].x)*(motionpoint.x - path.msg.points[foundIndex].x) + 
+			(motionpoint.y - path.msg.points[foundIndex].y)*(motionpoint.y - path.msg.points[foundIndex].y));
+			
+			lastPathDis -= dis;
+			sum_dis += dis;
+			if(sum_dis >= fabs(distance))
+			{
+				obj_conf.x = motionpoint.x;
+				obj_conf.y = motionpoint.y;
+				obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+				double angle = obj_conf.gpsPoint.heading - gps.msg.heading;
+				obj_conf.vxrel = obj_conf.v - mapvap.msg.v ;
+				obj_conf.vyrel = obj_conf.v ;
+				
+				obj_conf.gccpoint.xg = motionpoint.xg;
+				obj_conf.gccpoint.yg = motionpoint.yg;
+				obj_conf.gccpoint.angle = motionpoint.angle;
+				
+				break;
+			}
+			
+			
+		}
+	}else
+	{
+		double sum_dis = 0;
+		for(int i = foundIndex; i < path.msg.points.size(); i++)
+		{
+			ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+			double dis = sqrt((motionpoint.x - path.msg.points[foundIndex].x)*(motionpoint.x - path.msg.points[foundIndex].x) + 
+			(motionpoint.y - path.msg.points[foundIndex].y)*(motionpoint.y - path.msg.points[foundIndex].y));
+			
+			lastPathDis += dis;
+			sum_dis += dis;
+			if(sum_dis >= fabs(distance))
+			{
+				obj_conf.x = motionpoint.x;
+				obj_conf.y = motionpoint.y;
+				obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+				double angle = obj_conf.gpsPoint.heading - gps.msg.heading;
+				obj_conf.vxrel = obj_conf.v - mapvap.msg.v ;
+				obj_conf.vyrel = obj_conf.v ;
+				
+				obj_conf.gccpoint.xg = motionpoint.xg;
+				obj_conf.gccpoint.yg = motionpoint.yg;
+				obj_conf.gccpoint.angle = motionpoint.angle;
+				
+				break;
+			}
+		}
+	}
+}
+
+
+void objectSimulation::forwardDis_SS(sObj_conf &obj_conf)
+{
+	if(obj_conf.runDis > 0)
+	{
+		cout << "error stay still ,and the runDis > 0 ???????????????"<<endl; 
+		return;
+	}
+	
+	double min_dis = 9999;
+	int foundIndex = -1;
+	double y_dis = 0;
+	for(int i = 0; i < path.msg.points.size(); i++)
+	{
+		ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+		double dis = (motionpoint.x - obj_conf.x)*(motionpoint.x - obj_conf.x) + 
+		(motionpoint.y - obj_conf.y)*(motionpoint.y - obj_conf.y);
+		if(dis < min_dis)
+		{
+			min_dis = dis;
+			y_dis = motionpoint.y - obj_conf.y;
+			foundIndex = i;
+		}
+	}
+	y_dis = obj_conf.y_dis;
+	
+	cout << "staystill before : y_dis|x|y |rundis:" << y_dis << "|" << obj_conf.x << "|" 
+		<< obj_conf.y << "|" << obj_conf.runDis<<endl;
+	
+	if(foundIndex == -1)  return;
+	
+	double sum_dis = 0;
+	for(int i = foundIndex; i > 0; i--)
+	{
+		ivpathplanner::motionpoint motionpoint = path.msg.points[i];
+		double dis = sqrt((motionpoint.x - path.msg.points[foundIndex].x)*(motionpoint.x - path.msg.points[foundIndex].x) + 
+		(motionpoint.y - path.msg.points[foundIndex].y)*(motionpoint.y - path.msg.points[foundIndex].y));
+		
+		sum_dis += dis;
+		if(sum_dis >= fabs(obj_conf.runDis))
+		{
+			obj_conf.x = motionpoint.x;
+			obj_conf.y = motionpoint.y - y_dis;
+			obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+			double angle = obj_conf.gpsPoint.heading - gps.msg.heading;
+			obj_conf.vxrel = 0 - mapvap.msg.v ;
+			obj_conf.vyrel = obj_conf.v ;
+			
+			
+			break;
+		}
+	}
+}
+
+void objectSimulation::forwardDis_CISD_y(sObj_conf &obj_conf)
+{
+	double t = (ros::Time::now() - obj_conf.cut_Time).toSec();
+	cout << "cut tttttt:"<< t << "|" << obj_conf.dynamicConfig.cycle_time << endl;
+	if(t >= obj_conf.dynamicConfig.cycle_time)
+	{
+		if(obj_conf.moveState == 1)  obj_conf.moveState = 2;
+		if(obj_conf.moveState == 3)  obj_conf.moveState = 0;
+	}
+	
+	
+	double cut_v = obj_conf.y_dis/obj_conf.dynamicConfig.cycle_time;
+	double cur_y_dis = 0.0;
+	
+	switch(obj_conf.moveState)
+	{
+		case 0:   //follow outline
+			cout << "cut  follow outline : "<< obj_conf.y<<"|"<<obj_conf.y_dis<<endl;
+			obj_conf.y = obj_conf.y - obj_conf.y_dis;
+			obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+			break;
+		case 1:   //ready to cut in
+			cout << "cut  ready to cut in"<<endl;
+			cur_y_dis = obj_conf.y_dis/fabs(obj_conf.y_dis) * 
+					(fabs(obj_conf.y_dis) - cut_v * t);
+			cout << "cut  t|v|cur_y_dis |y:" <<t << "|" << cut_v << "|"<< cur_y_dis<<"|"<<obj_conf.y << endl;
+			obj_conf.y = obj_conf.y - cur_y_dis;
+			obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+			break;
+		case 2:	  //follow inline
+			cout << "cut  follow inline"<<endl;
+			break;
+		case 3:   //ready to cut out
+			cout << "cut ready to cut out"<<endl;
+			cur_y_dis = obj_conf.y_dis/fabs(obj_conf.y_dis) * 
+					( cut_v * t);
+			cout << "cut  t|v|cur_y_dis|y :" <<t << "|" << cut_v << "|"<< cur_y_dis << "|" << obj_conf.y << endl;
+			obj_conf.y = obj_conf.y - cur_y_dis;
+			obj_conf.gpsPoint = mgeoTool.GCCS2GPS(gps.msg,obj_conf.x, obj_conf.y);
+			break;
+	}
+}
+
+
+
+
+
+
+bool firstInGetObj = false;
+void objectSimulation::generateObjs()
+{
+	if(!firstInGetObj)
+	{
+		objRevTime = ros::Time::now();
+		firstInGetObj = true;
+		return;
+	}
+	objs.objs.clear();
+	for(int i = 0; i < obj_confVec.size(); i++)
+	{
+		float obj_t = ( ros::Time::now()- objRevTime  ).toSec();
+		objRevTime = ros::Time::now();
+		if(obj_t > 5) 
+		{
+			return;
+		}
+		//obj_confVec[i].v = mapvap.msg.v;
+		double dis ;//= obj_confVec[i].v * obj_t;
+		double reldis;// = (obj_confVec[i].v - mapvap.msg.v)* obj_t;
+		sPointOfGCCS CurRelPoint;
+		int action_num = -1;
+		gnh.getParam("sim_action", action_num);
+		sPoint2d tempPoint;
+		sPoint2d onroadPoint;
+		sPointOfVCS cursPointOfVCS;
+		sPointOfGCCS carpos ;
+		//cout << "choose action  "<< obj_confVec[i].dynamicConfig.function<<endl;
+		switch(obj_confVec[i].dynamicConfig.function)
+		{
+		case FUNC_FF: //following forward
+			cout << "choose action  FUNC_FF" << endl;
+			
+			if(action_num == 3 )
+			{
+				dis = obj_confVec[i].v * obj_t;
+				reldis = (obj_confVec[i].v - mapvap.msg.v)* obj_t;
+				obj_confVec[i].runDis += reldis;
+				cout << "objectSimulation:t|v|reldis|sumdis" << obj_t << "|" <<
+				obj_confVec[i].v - mapvap.msg.v << "|" <<reldis << "|" << obj_confVec[i].runDis<< endl; 
+				if(fabs(obj_confVec[i].runDis) > 0.1  && isgpsvalid == true )
+				{
+					isgpsvalid = false;
+					forwardDis_FF(obj_confVec[i], obj_confVec[i].runDis);
+					obj_confVec[i].runDis = 0;
+				}
+				else if(fabs(obj_confVec[i].runDis) <= 0.1)
+				{
+					sPoint2d disPoint =  getClosestDis(lastPathDis);
+					cout << "state : x,y :" << disPoint.x << "|" <<disPoint.y  << endl;
+					obj_confVec[i].x = disPoint.x;
+					obj_confVec[i].y = disPoint.y;
+					cout << "state : lastPathDis :" << lastPathDis << endl;
+					
+				}
+				
+				
+			}
+		break;
+		case FUNC_SS: 
+			if(action_num != 3 ) break;
+			reldis = (0 - mapvap.msg.v)* obj_t;
+			obj_confVec[i].runDis += reldis;
+			if(fabs(obj_confVec[i].runDis) > 0.1  && isgpsvalid == true )
+			{
+				isgpsvalid = false;
+				forwardDis_SS(obj_confVec[i]);
+				obj_confVec[i].runDis = 0;
+			}
+			/*else if(fabs(obj_confVec[i].runDis) <= 0.1)
+			{
+				sPoint2d disPoint =  getClosestDis(lastPathDis);
+				cout << "state : x,y :" << disPoint.x << "|" <<disPoint.y  << endl;
+				obj_confVec[i].x = disPoint.x;
+				obj_confVec[i].y = disPoint.y;
+				cout << "state : lastPathDis :" << lastPathDis << endl;
+				
+			}*/
+			if(obj_confVec[i].x < 1)
+					obj_confVec[i].y = 10;
+			
+		break;
+		case FUNC_CISD:  //cut in slow down
+			if(action_num == 0) break;
+			//ready to cut in , but get cmd cut out
+			if(obj_confVec[i].moveState == 1 && action_num == 1)  
+				break;
+			//ready to cut out , but get cmd cut int
+			if(obj_confVec[i].moveState == 3 && action_num == 2)  break;
+			
+			if(obj_confVec[i].moveState == 0 && action_num == 2)
+			{
+				obj_confVec[i].moveState = 1; //ready to cut in
+				obj_confVec[i].cut_Time = ros::Time::now();
+			}
+			if(obj_confVec[i].moveState == 2 && action_num == 1)
+			{
+				obj_confVec[i].moveState = 3; //ready to cut out
+				obj_confVec[i].cut_Time = ros::Time::now();
+			}
+			
+			reldis = (obj_confVec[i].v - mapvap.msg.v)* obj_t;
+			obj_confVec[i].runDis += reldis;
+			if(isgpsvalid == true)
+			{
+				isgpsvalid = false;
+				//if(fabs(obj_confVec[i].runDis) > 0.1)
+				{
+					forwardDis_FF(obj_confVec[i], obj_confVec[i].runDis);
+					obj_confVec[i].runDis = 0;
+					cout << "------cut  obj_confVec[i].y:" <<obj_confVec[i].y << endl; 
+				}
+				cout << "********cut  obj_confVec[i].y:" <<obj_confVec[i].y << endl;
+			
+				
+				forwardDis_CISD_y(obj_confVec[i]);
+				if(obj_confVec[i].x < 1)
+					obj_confVec[i].y = 10;
+				
+			}
+		break;
+		case FUNC_CISU: //cut in speed up
+		break;
+		case FUNC_OBSL: //overtaking by side lane
+		break;
+		case FUNC_FB: //following backward
+		break;
+		}
+		
+		
+		
+		perception_msgs::objfus obj;
+		obj.x = obj_confVec[i].x;
+		obj.y = obj_confVec[i].y;
+		obj.vxrel = obj_confVec[i].v - mapvap.msg.v;//obj_confVec[i].vxrel;
+		obj.vyrel = obj_confVec[i].vyrel;
+		obj.speed = obj_confVec[i].v;
+		obj.id = obj_confVec[i].id;
+		obj.width = 0.01;
+		obj.length = 5;
+		obj.type = 0;//car
+		//int action_num = -1;
+		gnh.getParam("sim_action", action_num);
+		if(action_num != 0)
+			objs.objs.push_back(obj);
+	}
+}
+
+
+
+void objectSimulation::getGpsFromPath()
+{
+    if(gps.isvalid == false) return;
+    if(path.msg.points.size() == 0) return;
+    self_v = path.msg.points[0].velocity;
+    float inner_t = ( ros::Time::now()- PathRevTime  ).toSec();
+    //float dis = inner_t * self_v;
+    float dis = 2;
+    float sumDis = 0.0;
+    float x = path.msg.points[0].x;
+    float y = path.msg.points[0].y;
+    ivlocmsg::ivsensorgps roadgps = gps.msg;
+    for(int i = 0; i < path.msg.points.size(); i++)
+    {
+        float tmp = (path.msg.points[i].x - x)*(path.msg.points[i].x - x) + 
+            (path.msg.points[i].y - y)*(path.msg.points[i].y - y);
+        sumDis += sqrt(tmp);
+        x = path.msg.points[i].x;
+        y = path.msg.points[i].y;
+	    roadgps = mgeoTool.GCCS2GPS(roadgps, x , y); 
+
+        if(sumDis >= dis)
+        {
+            break;
+        }
+    }
+    cout << "inner_t   ******************  "<< inner_t << "|" << dis << "|" << x << "|" << y << endl;
+	curgps = mgeoTool.GCCS2GPS(gps.msg, x , y); 
+
+
+
+}
+
+
+
+void objectSimulation::run()
+{
+    ros::Rate rate(10);
+	ros::Time rosPreTime = ros::Time::now();
+	
+    while(ros::ok()) 
+    {
+		double t = (ros::Time::now() - rosPreTime).toSec()*1000;
+		rosPreTime = ros::Time::now();
+		objectDebug.dis = t;
+		ros::spinOnce();
+		
+		if(!gps.isvalid ) continue;
+		if(!isCallback_locpos ) continue;
+        //gnh.param("sim_a",gConfig.a,gConfig.a);
+        //get configure from parameter server
+		cout << "obj_confVec  size   "<< obj_confVec.size() << endl;
+		//if(mapvap.msg.v < 1)
+        getgConfig();
+		
+	//synchronousConfig();
+        //test
+        if(0)
+        {
+            cout << "Now configure id is:";
+            for(int i = 0; i < obj_confVec.size(); i++)
+            {
+                if(obj_confVec[i].dynamicConfig.isConfigureOK)
+                    cout << obj_confVec[i].dynamicConfig.Target_ID << "|";
+            }
+            cout << endl;
+        }
+        generateA();
+		generateV();
+        generateObjs();
+        pub_obj.publish(objs);
+
+
+		if(objs.objs.size() != 0){
+			objectDebug.dis = objs.objs[0].x;
+			objectDebug.relx = objs.objs[0].vxrel;
+			objectDebug.v = objs.objs[0].vxrel + mapvap.msg.v;
+			objectDebug.vabs =  mapvap.msg.v;
+		}
+        pub_objDebug.publish(objectDebug);
+        rate.sleep();
+    }
+
+}
+
+
+
+
+
+
 
