@@ -1,50 +1,59 @@
-<?xml version="1.0"?>
-<launch>
-  <node name="ivsimulationenv" pkg="ivsimulationenv" type="ivsimulationenv_node" output="screen" /> 
-  
-  <node name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure" output="screen"/>
+/*************************************************************************
+	> File Name: main.cpp
+	> Author: 
+	> Mail: 
+	> Created Time: 2017年11月18日 星期六 08时32分11秒
+ ************************************************************************/
 
-	<param  value="false" type="bool" name="configure"/>
-	<param  value="true" type="bool" name="configure_forclient"/>
-
-	<param  value="0" type="int" name="Target_ID"/>
-	<param  value="2" type="int" name="function"/>
-	<param  value="10" type="double" name="sim_x"/>
-	<param  value="0" type="double" name="sim_R_x"/>
-	<param  value="0" type="double" name="sim_y"/>
-	<param  value="0" type="double" name="sim_R_y"/>
-	<param  value="0" type="double" name="sim_v"/>
-	<param  value="0" type="double" name="sim_R_v"/>
-	<param  value="false" type="bool" name="sim_acceleration_selection"/>
-	<param  value="0" type="double" name="sim_a"/>
-	<param  value="0" type="int" name="sim_auto_scceleration"/>
-	<param  value="20" type="double" name="sim_cycle_time"/>
-	<param  value="5" type="double" name="sim_Range"/>
-	<param  value="0" type="int" name="sim_action"/>
-
-	<param  value="0" type="int" name="ac_target_id"/>
-	<param  value="-1" type="int" name="ac_click_num"/>
+#include<iostream>
+using namespace std;
 
 
-	<!--param  value="116.23086665" type="double" name="cur_sim_lon"/>
-	<param  value="40.159832027" type="double" name="cur_sim_lat"/>
-	<param  value="353.487" type="double" name="cur_sim_heading"/>
-	<param  value="0.200633333333" type="double" name="cur_sim_velocity"/-->
+#include <ros/ros.h>
 
-	<param  value="116.231864031" type="double" name="cur_sim_lon"/>
-	<param  value="40.1619770888" type="double" name="cur_sim_lat"/>
-	<param  value="81.111" type="double" name="cur_sim_heading"/>
-	<param  value="0" type="double" name="cur_sim_velocity"/>
+#include <dynamic_reconfigure/server.h>
+#include <ivsimulationenv/simulationConfig.h>
 
+void callback(ivsimulationenv::simulationConfig &config, uint32_t level) {
+		ROS_INFO("Reconfigure Request:");
+		ros::NodeHandle nh;
+		//m_config = config;
+		bool IsConfiguring = false;
+		nh.getParam("configure",IsConfiguring);
+		if(!IsConfiguring){
+		nh.setParam("Target_ID", config.Target_ID);
+		nh.setParam("function", config.Function);
+		nh.setParam("sim_x", config.x);
+		nh.setParam("sim_R_x", config.R_x);
+		nh.setParam("sim_y", config.y);
+		nh.setParam("sim_R_y", config.R_y);
+		
+		nh.setParam("sim_R_v", config.R_v);
+		
+		cout << "set setParam true"<<endl;
+		nh.setParam("configure", true);
+    }
 
+	nh.setParam("sim_v", config.v);
+	nh.setParam("sim_acceleration_selection", config.Acceleration_selection);    
+    nh.setParam("sim_auto_scceleration", config.auto_acceleration);
+    nh.setParam("sim_cycle_time", config.cycle_time);
+    nh.setParam("sim_Range", config.Range);
+    nh.setParam("sim_action", config.action);
+	nh.setParam("sim_a", config.a);
+	nh.setParam("sim_action", config.action);
+}
 
-	<param  value="117.84135437" type="double" name="cur_sim_xg"/>
-	<param  value="33.9090499878" type="double" name="cur_sim_yg"/>
-	<param  value="351.110992432" type="double" name="cur_sim_angle"/>
-	<param value="true" type="bool" name="isover"/>
+int main(int argc, char **argv) {
+  ros::init(argc, argv, "ivsimulationenv");
 
-	<param  value="0" type="double" name="cur_sim_actspeed"/>
+  dynamic_reconfigure::Server<ivsimulationenv::simulationConfig> server;
+  dynamic_reconfigure::Server<ivsimulationenv::simulationConfig>::CallbackType f;
 
+  f = boost::bind(&callback, _1, _2);
+  server.setCallback(f);
 
-
-</launch>
+  ROS_INFO("Spinning node");
+  ros::spin();
+  return 0;
+}
