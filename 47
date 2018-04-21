@@ -1,0 +1,27 @@
+#pragma once
+
+#include <iostream>
+#include "common.h"
+
+class Obstacle
+{
+public:
+    Obstacle(AstarDwaConfig* config);
+    ~Obstacle();
+
+    void obstacleUpdate(std::vector<thz::Point32> &obstaclePoints);
+    
+private:
+    AstarDwaConfig    *m_config;
+public:
+    SortedObstacleMap m_nearestObstacles;
+    SortedObstacleMap m_rawObstacles;
+    SortedObstacleMap m_dilatedObstacles;
+
+private:
+    void nearestObstaclesInsert(thz::Point32 point);
+    void rawObstaclesInsert(thz::Point32 point);
+    void dilatedObstaclesInsert(thz::Point32 point, const float& distance);
+};
+
+
