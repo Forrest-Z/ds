@@ -1,0 +1,24 @@
+cmake_minimum_required(VERSION 2.8.3)
+project(astar_dwa)
+
+add_compile_options(-std=c++11)
+
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  std_msgs
+  tf
+)
+
+catkin_package()
+
+aux_source_directory(./src DIRSRCS)
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+)
+
+add_executable(astar_dwa_node ${DIRSRCS})
+add_dependencies(astar_dwa_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(astar_dwa_node
+  ${catkin_LIBRARIES}
+)
+
