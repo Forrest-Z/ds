@@ -1,0 +1,12 @@
+#pragma once
+
+namespace Constants 
+{
+	static const float lateralSamplingResolution = 1;
+	static const int   lateralSamplingNum = 3;
+	static const float WD = 0.8;
+	static const float sideLength = 1.0;
+	static const float carWidth = 1.0;
+	static const float delta_s = 0.1;
+	static const float delta_l = 3;
+}
