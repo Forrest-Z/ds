@@ -1,139 +1,151 @@
-#ifndef HELPERS_H_
-#define HELPERS_H_
+#include "jmt.h"
 
-#include <vector>
-#include <math.h>
-#include <algorithm>
-#include "ros/ros.h"
-#pragma once
-// Here's the duration period for each path plan we send to the controller
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
 
-//double MAX_VELOCITY;
+JMT::JMT(const State& start, const State& end, const double t) {
 
+  MatrixXd A = MatrixXd(3,3);
+  VectorXd b = VectorXd(3);
+  VectorXd x = VectorXd(3);
+  this->c = VectorXd(6);
 
+  const double t2 = t * t;
+  const double t3 = t * t2;
+  const double t4 = t * t3;
+  const double t5 = t * t4;
 
-const double TIME_INCREMENT = 0.02;
-const double REALLY_BIG_NUMBER = 1000000.0;
-const double MAX_VELOCITY = 30/3.6;
+    A <<   t3,     t4,    t5,
+         3*t2,   4*t3,  5*t4,
+         6*t ,  12*t2, 20*t3;
 
-//behaviorplanner
-const double TIME_THRESHOLD_ROADTYPE = 0.5;
-const double CURVE_WEIGHT = 0.5;
-const double UTURN_WEIGHT = 0.5;
-const double SPEED_BUFFER_THESHOLD = 3;
-const double TRAVERSE_TIME = 0.2;
-const double FRONT_GAP_THRESH = 10.0;
-const double FRONT_GAP_SAFE = 15.0;
-const double FRONT_BUFFER = FRONT_GAP_THRESH + 35.0; //50m 40 - 60 
+    b << end.p - (start.p + start.v * t + 0.5 * start.a * t2),
+         end.v - (start.v + start.a * t),
+         end.a -  start.a;
 
+    x = A.inverse() * b;
 
-//pathdecision
-const double SAFE_VELOCITY = 30/3.6;
-const double STANDARD_VELOCITY = 30/3.6;
-const int NUMBER_OF_CURVE = 150;
-const int NUMBER_OF_U_TURN = 20;
-const double CURVE_POINT_CURVATURE = 0.02;
-const double UTURN_POINT_CURVATURE = 0.3;
-
-//velocitygeneration
-const double NO_CAR_DELTA_S = 3;
-const double FOLLOW_CAR_DELTA_S = 6;
-const double FORWARD_LENGTH = 47.9;
-const double VELOCITY_DIFFERNCE = 0.15;
-const double DISTANCE_BUFFER = 5.0;
+    // if(start.a > 0.001 && end.v - start.v > 0 )
+    // {
+    //   double a3_a = (end.v - start.v - start.a * t) / (3*t2);
+    //   this->c << start.p,
+    //        start.v,
+    //        start.a / 2.0,
+    //        a3_a,
+    //        0,
+    //        0;
+    // }
 
 
 
-//optimize trajectory
-const double MAX_ACCEL = 1.5;
-const double MAX_JERK = 1.5;
-const double EXPECTED_JERK_IN_ONE_SEC = 0.2; //1.5
-const double EXPECTED_ACC_IN_ONE_SEC = 0.5;
-const double EXPECTED_DIFF_V_IN_ONE_SEC = 1; //0.5
-const double VEHICLE_RADIUS = 1.5;
-
-
-enum class BehaviorType {
-  FOLLOW_CAR, AVOID_OBSTACLE, NO_CAR
-};
-
-enum class VelocityType{
-	ACCEL, DECEL, STOP
-};
-
-enum class RoadType{
-  CURVE, STRIGHT, U_TURN
-};
-
-  class TrjObject{
-  public:
-    TrjObject(){
+    if(end.v < 0.001 && fabs(start.v - end.v) > 0.2) //emergency stop
+    {
+      double a2_e = (end.v - start.v) / (2*t);
+      this->c << start.p,
+           start.v,
+           a2_e,
+           0,
+           0,
+           0;
 
     }
-    TrjObject(const std::vector<double> &goal_p, const std::vector<double> &unperturb_goal_p,const std::vector<double> &unperturb_s_coeff_p, double t_p, double unperturbed_t_p){
-      goal = goal_p;
-      unperturb_goal = unperturb_goal_p;
-      t = t_p;
-      unperturbed_t = unperturbed_t_p;
-      unperturb_s_coeff = unperturb_s_coeff_p;
+
+    else if((start.a > 0.001 && end.v - start.v > 0 ) || (start.a < -0.001 && end.v - start.v < 0 ))
+    {
+      MatrixXd A_a = MatrixXd(2,2);
+      MatrixXd b_a = VectorXd(2);
+      VectorXd x_a = VectorXd(2);
+
+      A_a << 3*t2,  4*t3,
+            6*t,  12*t2;
+
+      b_a << end.v - (start.v + start.a * t),
+            end.a - start.a;
+
+      x_a = A_a.inverse() * b_a;
+      double a3_a = (end.v - start.v - start.a * t) / (3*t2);
+      this->c << start.p,
+           start.v,
+           start.a / 2.0,
+           x_a[0],
+           x_a[1],
+           0;
     }
 
-    std::vector<double> goal;
-    double t;
-    double unperturbed_t;
-    std::vector<double> s_coeff;
-    std::vector<double> unperturb_s_coeff;
-    std::vector<double> unperturb_goal;
-  };
+    else
+    {
+      this->c << start.p,
+           start.v,
+           start.a / 2.0,
+           x[0],
+           x[1],
+           x[2];
+    }
 
-/* State - stores three doubles p, v, a
- * intended to store position, velocity, and acceleration components in the s, or d axis
- */
-struct State {
-  double p;
-  double v;
-  double a;
-};
+    //std::cout << this->c << std::endl;
+}
 
-/* XYPoints stores two vectors x, y which are the map coordinates to be passed to
- * the simulator. Also holds an int n intended to store the number of (x, y) pairs
- */
-struct XYPoints {
-  std::vector<double> xs;
-  std::vector<double> ys;
-  int n;
-};
+double JMT::get(const double t) const{
 
-typedef float float32;
+  const double t2 = t * t;
+  const double t3 = t * t2;
+  const double t4 = t * t3;
+  const double t5 = t * t4;
 
-typedef struct pathPoint {
-  float32 length;
-  float32 t;
-  float32 max_curvature;
-  float32 curvature;
-  float32 y_fitting;
-  //ivpathplanner::pathpoint pathpoints_in;
-} pathPoint;
+  Eigen::VectorXd T = VectorXd(6);
+  T << 1.0, t, t2, t3, t4, t5;
 
-inline double sigmoid(double const &v, double const &low_value, double const &med_value)
-{
-  return (2*(med_value-low_value) / (1 + exp(-v)) + low_value);
+  return T.transpose() * this->c;
+}
+
+
+double JMT::get_velocity(const double t) const{
+
+  const double t2 = t * t;
+  const double t3 = t * t2;
+  const double t4 = t * t3;
+  const double t5 = t * t4;
+
+  Eigen::VectorXd T = VectorXd(6);
+  T << 0.0, 1.0, 2*t, 3*t2, 4*t3, 5*t4;
+
+  return T.transpose() * this->c;
+}
+
+double JMT::get_acceleration(const double t) const{
+
+  const double t2 = t * t;
+  const double t3 = t * t2;
+  const double t4 = t * t3;
+  const double t5 = t * t4;
+
+  Eigen::VectorXd T = VectorXd(6);
+  T << 0.0, 0.0, 2, 6*t, 12*t2, 20*t3;
+
+  return T.transpose() * this->c;
 }
 
 /*
-A function that returns a value between 0 and 1 for x in the
-range [0, infinity] and -1 to 1 for x in the range [-infinity, infinity].
-
-Useful for cost functions.
+ Calculates the derivative of a polynomial and returns the corresponding coefficients.
  */
-inline double logistic(double x)
-{
-  return 2.0 / (1 + exp(-x)) - 1.0;
+std::vector<double> differentiate(const std::vector<double> &coefficients){
+  std::vector<double> new_cos = {};
+  for (int i=0; i<coefficients.size();i++ ){
+    if (i==0){
+      continue;
+    }
+    new_cos.push_back(i * coefficients[i]);
+  }
+  return new_cos;
 }
 
-
-
-
-
-
-#endif // HELPERS_H_
+/*
+ Takes the coefficients of a polynomial and point t, calculate the f value
+ */
+double to_equation(const std::vector<double> &coefficients, double t){
+  double total = 0.0;
+  for (int i = 0; i<coefficients.size(); i++ ){
+    total += coefficients[i] * pow(t, i);
+  }
+  return total;
+}
