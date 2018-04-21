@@ -1,0 +1,59 @@
+#pragma once
+
+struct Point
+{
+    float x;
+    float y;
+    float yaw;
+    Point():x(0.0), y(0.0), yaw(0.0){}
+    Point(float _x, float _y, float _yaw):x(_x), y(_y), yaw(_yaw){}
+    void operator=(const Point &point)
+    {
+        x = point.x;
+        y = point.y;
+        yaw = point.yaw;
+    }
+    Point( const Point &point)
+    {
+        x = point.x;
+        y = point.y;
+        yaw = point.yaw;
+    }
+};
+
+struct Polygon
+{
+	std::vector<Point> points;
+};
+
+struct Vertex
+{
+	Vertex()
+	{
+		init();
+	}
+	Vertex(const Point& _point, int _lateralOffset):point(_point), lateralOffset(_lateralOffset)
+	{
+		init();
+	}
+	Vertex(float x, float y, float yaw, int _lateralOffset):point(x,y,yaw), lateralOffset(_lateralOffset)
+	{
+		init();
+	}
+
+	void init()
+    {
+    	father = nullptr;
+    	nodeIndex = -1;
+    	visit = false;
+        value = 0;
+    }
+
+	Point point;
+	int lateralOffset;
+    int nodeIndex;
+    int value;
+    bool visit;
+    Vertex *father;
+};
+
