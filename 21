@@ -1,0 +1,28 @@
+#pragma once
+
+#include <vector>
+#include "custom_types.h"
+#include "collision_detection.h"
+
+class ReferenceTrajectoryPlanning
+{
+public:
+	ReferenceTrajectoryPlanning(CollisionDetection *collisionDetection);
+	~ReferenceTrajectoryPlanning();
+	std::vector<Point> generatePath(const std::vector<int>& lanePointsIndex);
+
+//to test, to show in the rviz
+public:
+	std::vector<std::vector<Vertex>> testSeeds;	
+	std::vector<Point> testKeyPoints;
+	std::vector<Point> samplingPoints;
+	std::vector<Point> m_lanePoints;
+private:
+	std::vector<std::vector<Vertex>> generateSeeds(const std::vector<int>& lanePointsIndex);
+	std::vector<Vertex> lateralSeeding(const Point& point, int& index, std::vector<Point>& _samplingPoints);
+	Point getUnitNormalVector(const Point& point);
+
+private:
+	int m_seedsNum;
+	CollisionDetection *m_collisionDetection;
+};
