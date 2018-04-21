@@ -1,0 +1,35 @@
+
+#pragma once
+
+#include <ros/ros.h>
+#include <ros/publisher.h>
+
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/graph_traits.hpp>
+
+#include <iterator>
+
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseArray.h>
+#include <tf/transform_datatypes.h>
+#include <visualization_msgs/Marker.h>
+#include "common.h"
+
+class TebVisualization
+{
+public:
+  TebVisualization(ros::NodeHandle& nh);
+  
+  void initialize(ros::NodeHandle& nh);
+  void publishLocalPlanAndPoses(const std::vector<thz::Point32>& teb) const;
+  void publishViaPoints(const std::vector<thz::Point32>& initial_plan, const std::string& ns = "ViaPoints") const;
+  void publishObstacles(const SortedObstacleMap& m_dilatedObstacles) const;
+  
+protected:
+
+  ros::Publisher teb_poses_pub_; 
+  ros::Publisher teb_marker_pub_; 
+    
+  bool initialized_; 
+
+};
