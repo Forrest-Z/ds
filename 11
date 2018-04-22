@@ -1,60 +1,99 @@
-#pragma once
+#include <ros/ros.h>
+#include <iostream>
+#include "teb_optimal_planner.h"
+#include <vector>
+#include <tf/transform_broadcaster.h>
 
-#include "g2o/config.h"
-#include "g2o/core/base_vertex.h"
-#include "g2o/core/hyper_graph_action.h"
+using namespace std;
 
-#include <Eigen/Core>
+void planChange(vector<PoseSE2> &v);
+void insertPose(PoseSE2 pose1, PoseSE2 pose2, vector<PoseSE2> &v);
 
-class VertexTimeDiff : public g2o::BaseVertex<1, double>
+int main(int argc, char **argv)
 {
-public:
+	ros::init(argc, argv, "teb_node");
+	ros::NodeHandle nh;
 
-  VertexTimeDiff(bool fixed = false)
-  {
-    setToOriginImpl();
-    setFixed(fixed);
-  }
-   
-  VertexTimeDiff(double dt, bool fixed = false)
-  {
-    _estimate = dt;
-    setFixed(fixed);
-  }
+	TebOptimalPlanner teb(nh);
 
-  ~VertexTimeDiff()
-  {}
+	vector<PoseSE2> v;
+	v.push_back(PoseSE2(0.0,0.0,0.0));
+	v.push_back(PoseSE2(3.0,2.0,0.0));
+	v.push_back(PoseSE2(5.0,3.0,0.0));
+	v.push_back(PoseSE2(12.0,-3.0,0.0));
+	planChange(v);
+	cout.precision(4);
+	// for(int i=0; i<v.size(); i++)
+	// 	cout<<"("<<v[i].x()<<","<<v[i].y()<<","<<v[i].theta()<<")"<<endl;
+	
+	teb.plan(v);
 
-  /**
-    * @brief Access the timediff value of the vertex
-    * @see estimate
-    * @return reference to dt
-    */ 
-  double& dt() {return _estimate;}
-  const double& dt() const {return _estimate;}
-  
-  virtual void setToOriginImpl()
-  {
-    _estimate = 0.1;
-  }
+	static tf::TransformBroadcaster br;
+    tf::Transform transform;
+    transform.setOrigin( tf::Vector3(0.0,0.0,0.0) );
+    tf::Quaternion q;
+    q.setRPY(0, 0, 0);
+    transform.setRotation(q);
+    ros::Rate loop_rate(10);
 
-  virtual void oplusImpl(const double* update)
-  {
-      _estimate += *update;
-  }
+	while(ros::ok())
+	{
+		br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "base_link", "laser"));
 
-  virtual bool read(std::istream& is)
-  {
-    is >> _estimate;
-    return true;
-  }
+		teb.show();
 
-  virtual bool write(std::ostream& os) const
-  {
-    os << estimate();
-    return os.good();
-  }
+		ros::spinOnce();
+        loop_rate.sleep();
+	}
+	return 0;
+}
 
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};
+void planChange(vector<PoseSE2> &v)
+{
+	if(v.size() < 2)
+		return;
 
+	vector<PoseSE2> temp = v;
+	v.clear();
+	PoseSE2 pose1;
+	PoseSE2 pose2;
+	for(int i=1; i<temp.size(); i++)
+	{
+		pose1 = temp.at(i-1);
+		pose2 = temp.at(i);
+		insertPose(pose1, pose2, v);
+	}
+}
+
+void insertPose(PoseSE2 pose1, PoseSE2 pose2, vector<PoseSE2> &v)
+{
+	double dx = pose2.x() - pose1.x();
+    double dy = pose2.y() - pose1.y();
+    double eulerianDistance = sqrt(pow(dx,2) + pow(dy,2));
+    if(eulerianDistance < 0.1)
+	{
+		v.push_back(pose1);
+		v.push_back(pose2);
+		return;
+	}
+    int scale = floor(eulerianDistance / 0.1);
+    if(scale < 1)
+    {	
+		v.push_back(pose1);
+		v.push_back(pose2);
+		return;
+	}
+
+    double step_x   = (pose2.x() - pose1.x()) / scale;
+    double step_y   = (pose2.y() - pose1.y()) / scale;
+    double step_yaw = (pose2.theta() - pose1.theta()) / scale;
+
+    for(int i=0; i<scale; i++)
+    {
+    	double x   = pose1.x() + step_x * i;
+    	double y   = pose1.y() + step_y * i;
+    	double yaw = pose1.theta() + step_yaw * i;
+    	v.push_back(PoseSE2(x,y,yaw));
+    }
+    v.push_back(PoseSE2(pose2.x(),pose2.y(),pose2.theta()));
+}
