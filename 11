@@ -1,90 +1,179 @@
 
 #pragma once
 
+#include "g2o/stuff/misc.h"
 #include <Eigen/Core>
-#include <boost/utility.hpp>
-#include <boost/type_traits.hpp>
+#include "misc.h"
 
-#define SMALL_NUM 0.00000001
-
-/** 
- * @brief Check whether two variables (double) are close to each other
- * @param a the first value to compare
- * @param b the second value to compare
- * @param epsilon precision threshold
- * @return \c true if |a-b| < epsilon, false otherwise
- */
-inline bool is_close(double a, double b, double epsilon = 1e-4) 
-{ 
-  return std::fabs(a - b) < epsilon; 
-}
-
-/** 
- * @brief Return the average angle of an arbitrary number of given angles [rad]
- * @param angles vector containing all angles
- * @return average / mean angle, that is normalized to [-pi, pi]
- */
-inline double average_angles(const std::vector<double>& angles)
+class PoseSE2
 {
-  double x=0, y=0;
-  for (std::vector<double>::const_iterator it = angles.begin(); it!=angles.end(); ++it)
+public:
+  PoseSE2()
   {
-      x += cos(*it);
-      y += sin(*it);
+    setZero();
+  }      
+  PoseSE2(const Eigen::Ref<const Eigen::Vector2d>& position, double theta)
+  {
+      _position = position;
+      _theta = theta;
   }
-  if(x == 0 && y == 0)
-      return 0;
-  else
-      return std::atan2(y, x);
-}
+  
+  PoseSE2(double x, double y, double theta)
+  {
+      _position.coeffRef(0) = x;
+      _position.coeffRef(1) = y;
+      _theta = theta;
+  }
+  
+  PoseSE2(const PoseSE2& pose)
+  {
+      _position = pose._position;
+      _theta = pose._theta;
+  }
+	
+  ~PoseSE2() {}
 
-/** @brief Small helper function: check if |a|<|b| */
-inline bool smaller_than_abs(double i, double j) {return std::fabs(i)<std::fabs(j);}
+  Eigen::Vector2d& position() {return _position;}
 
+  const Eigen::Vector2d& position() const {return _position;}
+  
+  double& x() {return _position.coeffRef(0);}
+  
+  const double& x() const {return _position.coeffRef(0);}
+  
+  double& y() {return _position.coeffRef(1);}
+  
+  const double& y() const {return _position.coeffRef(1);}
+  
+  double& theta() {return _theta;}
+  
+  const double& theta() const {return _theta;}
+  
+  void setZero()
+  {
+    _position.setZero();
+    _theta = 0;
+  }
+  
+  /**
+   * @brief Return the unit vector of the current orientation
+   * @returns [cos(theta), sin(theta))]^T
+   */  
+  Eigen::Vector2d orientationUnitVec() const {return Eigen::Vector2d(std::cos(_theta), std::sin(_theta));}
+      
+  ///@}
 
-/**
- * @brief Calculate a fast approximation of a sigmoid function
- * @details The following function is implemented: \f$ x / (1 + |x|) \f$
- * @param x the argument of the function
-*/
-inline double fast_sigmoid(double x)
-{
-  return x / (1 + fabs(x));
-}
+      
+  /** @name Arithmetic operations for which operators are not always reasonable */
+  ///@{ 
+  
+  /**
+    * @brief Scale all SE2 components (x,y,theta) and normalize theta afterwards to [-pi, pi]
+    * @param factor scale factor
+    */ 
+  void scale(double factor)
+  {
+    _position *= factor;
+    _theta = g2o::normalize_theta( _theta*factor );
+  }
+	  
+  /**
+    * @brief Increment the pose by adding a double[3] array
+    * The angle is normalized afterwards
+    * @param pose_as_array 3D double array [x, y, theta]
+    */ 
+  void plus(const double* pose_as_array)
+  {
+    _position.coeffRef(0) += pose_as_array[0];
+    _position.coeffRef(1) += pose_as_array[1];
+    _theta = g2o::normalize_theta( _theta + pose_as_array[2] );
+  }
+  
+  /**
+    * @brief Get the mean / average of two poses and store it in the caller class
+    * For the position part: 0.5*(x1+x2)
+    * For the angle: take the angle of the mean direction vector
+    * @param pose1 first pose to consider
+    * @param pose2 second pose to consider
+    */ 
+  void averageInPlace(const PoseSE2& pose1, const PoseSE2& pose2)
+  {
+    _position = (pose1._position + pose2._position)/2;
+    _theta = g2o::average_angle(pose1._theta, pose2._theta);
+  }
+  
+  /**
+    * @brief Get the mean / average of two poses and return the result (static)
+    * For the position part: 0.5*(x1+x2)
+    * For the angle: take the angle of the mean direction vector
+    * @param pose1 first pose to consider
+    * @param pose2 second pose to consider
+    * @return mean / average of \c pose1 and \c pose2
+    */ 
+  static PoseSE2 average(const PoseSE2& pose1, const PoseSE2& pose2)
+  {
+    return PoseSE2( (pose1._position + pose2._position)/2 , g2o::average_angle(pose1._theta, pose2._theta) );
+  }
+  
+  PoseSE2& operator=( const PoseSE2& rhs ) 
+  {
+    if (&rhs != this)
+    {
+    	_position = rhs._position;
+    	_theta = rhs._theta;
+    }
+    return *this;
+  }
 
-/**
- * @brief Calculate Euclidean distance between two 2D point datatypes
- * @param point1 object containing fields x and y
- * @param point2 object containing fields x and y
- * @return Euclidean distance: ||point2-point1||
-*/
-template <typename P1, typename P2>
-inline double distance_points2d(const P1& point1, const P2& point2)
-{
-  return std::sqrt( std::pow(point2.x-point1.x,2) + std::pow(point2.y-point1.y,2) );
-}
-
-/** 
- * @brief Helper function that returns the const reference to a value defined by either its raw pointer type or const reference.
- * 
- * Return a constant reference for boths input variants (pointer or reference).
- * @remarks Makes only sense in combination with the overload getConstReference(const T& val).
- * @param ptr pointer of type T
- * @tparam T arbitrary type 
- * @return  If \c T is a pointer, return const *T (leading to const T&), otherwise const T& with out pointer-to-ref conversion
- */
-template<typename T>
-inline const T& get_const_reference(const T* ptr) {return *ptr;}
-
-/** 
- * @brief Helper function that returns the const reference to a value defined by either its raw pointer type or const reference.
- * 
- * Return a constant reference for boths input variants (pointer or reference).
- * @remarks Makes only sense in combination with the overload getConstReference(const T* val).
- * @param val
- * @param dummy SFINAE helper variable
- * @tparam T arbitrary type 
- * @return  If \c T is a pointer, return const *T (leading to const T&), otherwise const T& with out pointer-to-ref conversion
- */
-template<typename T>
-inline const T& get_const_reference(const T& val, typename boost::disable_if<boost::is_pointer<T> >::type* dummy = 0) {return val;}
+  PoseSE2& operator+=(const PoseSE2& rhs)
+  {
+    _position += rhs._position;
+    _theta = g2o::normalize_theta(_theta + rhs._theta);
+    return *this;
+  }
+  
+  friend PoseSE2 operator+(PoseSE2 lhs, const PoseSE2& rhs) 
+  {
+    return lhs += rhs;
+  }
+  
+  PoseSE2& operator-=(const PoseSE2& rhs)
+  {
+    _position -= rhs._position;
+    _theta = g2o::normalize_theta(_theta - rhs._theta);
+    return *this;
+  }
+  
+  friend PoseSE2 operator-(PoseSE2 lhs, const PoseSE2& rhs) 
+  {
+    return lhs -= rhs;
+  }
+  
+  friend PoseSE2 operator*(PoseSE2 pose, double scalar) 
+  {
+    pose._position *= scalar;
+    pose._theta *= scalar;
+    return pose;
+  }
+  
+  friend PoseSE2 operator*(double scalar, PoseSE2 pose) 
+  {
+    pose._position *= scalar;
+    pose._theta *= scalar;
+    return pose;
+  }
+  
+	friend std::ostream& operator<< (std::ostream& stream, const PoseSE2& pose)
+	{
+		stream << "x: " << pose._position[0] << " y: " << pose._position[1] << " theta: " << pose._theta;
+    return stream;
+	}
+      
+private:
+  
+  Eigen::Vector2d _position; 
+  double _theta;
+      
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW  
+};
