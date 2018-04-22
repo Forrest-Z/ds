@@ -1,38 +1,45 @@
+cmake_minimum_required(VERSION 2.8)
+project(test_stage)
 
-#pragma once
+set(CMAKE_BUILD_TYPE "Release")
+set(CMAKE_CXX_FLAGS "-std=c++11 -O3")
 
-#include "teb_config.h"
-#include "timed_elastic_band.h"
-#include <ros/ros.h>
-#include <ros/publisher.h>
+find_package(catkin REQUIRED COMPONENTS
+  roscpp
+  rospy
+  std_msgs
+  geometry_msgs
+  tf
+)
 
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/graph_traits.hpp>
+find_package(OpenCV REQUIRED)
 
-#include <iterator>
+catkin_package()
 
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/PoseArray.h>
-#include <tf/transform_datatypes.h>
-#include <visualization_msgs/Marker.h>
-#include "pose_se2.h"
-class TebOptimalPlanner; //!< Forward Declaration 
-class TebVisualization
-{
-public:
-  TebVisualization(ros::NodeHandle& nh);
-  
-  void initialize(ros::NodeHandle& nh);
-  void publishLocalPlanAndPoses(const TimedElasticBand& teb) const;
-  void publishViaPoints(const std::vector<PoseSE2>& initial_plan, const std::string& ns = "ViaPoints") const;
-  
-protected:
+file(GLOB test_src
+  "src/*.cpp"
+)
 
-  ros::Publisher teb_poses_pub_; 
-  ros::Publisher teb_marker_pub_; 
-    
-  bool initialized_; 
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+  /usr/include/suitesparse
+  /usr/include/eigen3
+  /opt/ros/jade/include
+  src
+  src/g2o_types
+)
+link_directories(
+  /opt/ros/jade/lib
+)
 
-public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW    
-};
+add_executable(test_node ${test_src})
+target_link_libraries(test_node
+  ${catkin_LIBRARIES}
+  g2o_core 
+  g2o_stuff
+  g2o_solver_csparse 
+  g2o_solver_cholmod
+  g2o_csparse_extension
+  cxsparse
+  ${OpenCV_LIBS}
+)
