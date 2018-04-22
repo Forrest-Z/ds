@@ -1,84 +1,60 @@
 #pragma once
 
-#include <g2o/config.h>
-#include <g2o/core/base_vertex.h>
-#include <g2o/core/hyper_graph_action.h>
-#include <g2o/stuff/misc.h>
+#include "g2o/config.h"
+#include "g2o/core/base_vertex.h"
+#include "g2o/core/hyper_graph_action.h"
 
-#include "pose_se2.h"
+#include <Eigen/Core>
 
-
-class VertexPose : public g2o::BaseVertex<3, PoseSE2 >
+class VertexTimeDiff : public g2o::BaseVertex<1, double>
 {
-public: 
-  VertexPose(bool fixed = false)
+public:
+
+  VertexTimeDiff(bool fixed = false)
   {
     setToOriginImpl();
     setFixed(fixed);
   }
-  VertexPose(const PoseSE2& pose, bool fixed = false)
+   
+  VertexTimeDiff(double dt, bool fixed = false)
   {
-    _estimate = pose;
-    setFixed(fixed);
-  }
-  VertexPose(const Eigen::Ref<const Eigen::Vector2d>& position, double theta, bool fixed = false)
-  {
-    _estimate.position() = position;
-    _estimate.theta() = theta;
-    setFixed(fixed);
-  }
-  VertexPose(double x, double y, double theta, bool fixed = false)
-  {
-    _estimate.x() = x;
-    _estimate.y() = y;
-    _estimate.theta() = theta;
+    _estimate = dt;
     setFixed(fixed);
   }
 
-  ~VertexPose() {}
-  
-  PoseSE2& pose() {return _estimate;}
-  
-  const PoseSE2& pose() const {return _estimate;}
-	 
-  Eigen::Vector2d& position() {return _estimate.position();}
+  ~VertexTimeDiff()
+  {}
 
-  const Eigen::Vector2d& position() const {return _estimate.position();}
-  
-  double& x() {return _estimate.x();}
-  
-  const double& x() const {return _estimate.x();}
-  
-  double& y() {return _estimate.y();}
-  
-  const double& y() const {return _estimate.y();}
-  
-  double& theta() {return _estimate.theta();}
-  
-  const double& theta() const {return _estimate.theta();}
+  /**
+    * @brief Access the timediff value of the vertex
+    * @see estimate
+    * @return reference to dt
+    */ 
+  double& dt() {return _estimate;}
+  const double& dt() const {return _estimate;}
   
   virtual void setToOriginImpl()
   {
-    _estimate.setZero();
+    _estimate = 0.1;
   }
 
   virtual void oplusImpl(const double* update)
   {
-    _estimate.plus(update);
+      _estimate += *update;
   }
 
   virtual bool read(std::istream& is)
   {
-    is >> _estimate.x() >> _estimate.y() >> _estimate.theta();
+    is >> _estimate;
     return true;
   }
 
   virtual bool write(std::ostream& os) const
   {
-    os << _estimate.x() << " " << _estimate.y() << _estimate.theta();
+    os << estimate();
     return os.good();
   }
 
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW  
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
