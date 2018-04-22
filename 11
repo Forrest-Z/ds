@@ -1,394 +1,96 @@
 
-#include "teb_optimal_planner.h"
-#include <boost/thread/once.hpp> 
-#include <cstdio> 
-#include <iostream>
-#include <sys/time.h>
-#include <unistd.h>
+#pragma once
 
-using namespace std;
+#include <math.h>
+#include <ros/ros.h>
+// teb stuff
+#include "teb_config.h"
+// #include "misc.h"
+#include "timed_elastic_band.h"
 
-TebOptimalPlanner::TebOptimalPlanner(ros::NodeHandle& nh)
+#include <Eigen/Core>
+#include <Eigen/StdVector>
+#include <Eigen/Geometry>
+
+#include "visualization.h"
+// g2o lib stuff
+#include "g2o/core/sparse_optimizer.h"
+#include "g2o/core/block_solver.h"
+#include "g2o/core/factory.h"
+#include "g2o/core/optimization_algorithm_gauss_newton.h"
+#include "g2o/core/optimization_algorithm_levenberg.h"
+#include "g2o/solvers/csparse/linear_solver_csparse.h"
+#include "g2o/solvers/cholmod/linear_solver_cholmod.h"
+
+// g2o custom edges and vertices for the TEB planner
+#include "g2o_types/edge_velocity.h"
+#include "g2o_types/edge_acceleration.h"
+#include "g2o_types/edge_kinematics.h"
+#include "g2o_types/edge_time_optimal.h"
+#include "g2o_types/edge_via_point.h"
+#include <boost/make_shared.hpp>
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+using namespace cv;
+using namespace Eigen;
+
+
+typedef g2o::BlockSolver< g2o::BlockSolverTraits<-1, -1> >  TEBBlockSolver;
+typedef g2o::LinearSolverCSparse<TEBBlockSolver::PoseMatrixType> TEBLinearSolver;
+typedef std::vector< Eigen::Vector2d, Eigen::aligned_allocator<Eigen::Vector2d> > ViaPointContainer;
+
+class TebOptimalPlanner
 {
-  this->registerG2OTypes();
-  // g2oInitNewVersion();
-  g2oInitOldVersion();
-  visual = new TebVisualization(nh);
-
-  printf("size..%d\n",(int)optimizer_->edges().size()); 
-  via_points_ = &via_points;
-}
-
-TebOptimalPlanner::~TebOptimalPlanner()
-{
-  clearGraph();
-}
-
-bool TebOptimalPlanner::optimizeTEB(int m, int n)
-{
-  bool success = false;
-  for(unsigned int i=0; i<m; ++i)
-  {
-    teb_.autoResize(cfg_.trajectory.dt_ref, cfg_.trajectory.dt_hysteresis, cfg_.trajectory.min_samples);
-
-    success = buildGraph();
-
-    if (!success)
-    {
-        clearGraph();
-        return false;
-    }
-    success = optimizeGraph(n);
-    if (!success) 
-    {
-        clearGraph();
-        return false;
-    }
+public:
+  TebOptimalPlanner(ros::NodeHandle& nh);
+  virtual ~TebOptimalPlanner();
+  
+  bool plan(const std::vector<PoseSE2>& initial_plan);    
+  bool optimizeTEB(int m, int n);
+  void clearPlanner();
+  void printTeb();
+  void show();
+  
+  void registerG2OTypes();
+  
+  TimedElasticBand& teb() {return teb_;};
+  const TimedElasticBand& teb() const {return teb_;};
+  	
+protected:
+  bool buildGraph();
+  bool optimizeGraph(int no_iterations);
+  void clearGraph();
+  
+  void AddTEBVertices();
+  void AddEdgesVelocity();
+  void AddEdgesAcceleration();
+  void AddEdgesTimeOptimal();
+  void AddEdgesKinematicsCarlike();
+  void AddEdgesViaPoints();
+  
+  boost::shared_ptr<g2o::SparseOptimizer> initOptimizer();
     
-    clearGraph();
-  }
-  return true;
-}
+  TebConfig cfg_; //!< Config class that stores and manages all related parameters
+   
+  TimedElasticBand teb_; //!< Actual trajectory object
+  boost::shared_ptr<g2o::SparseOptimizer> optimizer_;
+  ViaPointContainer via_points;
+  ViaPointContainer* via_points_;
+  Mat map;
+  unsigned int m_map_width;
+  unsigned int m_map_height;
+  void setViaPoints(const std::vector<PoseSE2>& initial_plan);
+  void mapToEmpty();
+  void mapShow();
+  void mapChange(const std::vector<PoseSE2>& initial_plan);
+  void mapChange();
+  void g2oInitNewVersion();
+  void g2oInitOldVersion();
+  TebVisualization *visual;
+  std::vector<PoseSE2> initial_plan_;
 
-bool TebOptimalPlanner::plan(const std::vector<PoseSE2>& initial_plan)
-{    
-  this->setViaPoints(initial_plan);
-  this->initial_plan_.clear();
-  this->initial_plan_ = initial_plan;
-  timeval tv;
-  gettimeofday(&tv,NULL);
-  long int time1 = tv.tv_sec*1000 + tv.tv_usec/1000;
-
-  teb_.initTEBtoGoal(initial_plan, cfg_.trajectory.dt_ref, true, cfg_.trajectory.min_samples);
-  bool result = this->optimizeTEB(10,100);
-
-  gettimeofday(&tv,NULL);
-  long int time2 = tv.tv_sec*1000 + tv.tv_usec/1000;
-
-  printf("cost: %ld ms\n",time2-time1);
-
-  if(result)
-  {
-    // this->mapChange();
-    // this->mapShow();
-  }
-  else
-  {
-    printf("optimize failed, THZ---");
-  }
-  return result;
-}
-
-bool TebOptimalPlanner::buildGraph()
-{
-  if (!optimizer_->edges().empty() || !optimizer_->vertices().empty())
-  {
-    printf("thzzz\n");
-    return false;
-  }
-
-  AddTEBVertices();
-
-  AddEdgesVelocity(); 
-  AddEdgesAcceleration();
-  AddEdgesTimeOptimal(); 
-  AddEdgesKinematicsCarlike(); // we have a carlike robot since the turning radius is bounded from below.
-
-  return true;  
-}
-
-bool TebOptimalPlanner::optimizeGraph(int no_iterations)
-{
-  if (cfg_.robot.max_vel_x<0.01)
-  {
-    clearGraph();
-    return false;	
-  }
-  
-  if (!teb_.isInit() || (int)teb_.sizePoses()<cfg_.trajectory.min_samples)
-  {
-    clearGraph();
-    return false;	
-  }
-  
-  optimizer_->setVerbose(cfg_.optim.optimization_verbose);
-  optimizer_->initializeOptimization();
-
-  int iter = optimizer_->optimize(no_iterations);
-  
-  if(!iter)
-  {
-  	return false;
-  }
-
-  clearGraph();	// thz, clear or not
-    
-  return true;
-}
-
-void TebOptimalPlanner::clearGraph()
-{
-  optimizer_->vertices().clear(); 
-  optimizer_->clear();
-}
-
-void TebOptimalPlanner::AddTEBVertices()
-{
-  // add vertices to graph
-  unsigned int id_counter = 0; // used for vertices ids
-  for (unsigned int i=0; i<teb_.sizePoses(); ++i)
-  {
-    teb_.PoseVertex(i)->setId(id_counter++);
-    optimizer_->addVertex(teb_.PoseVertex(i));
-    if (teb_.sizeTimeDiffs()!=0 && i<teb_.sizeTimeDiffs())
-    {
-      teb_.TimeDiffVertex(i)->setId(id_counter++);
-      optimizer_->addVertex(teb_.TimeDiffVertex(i));
-    }
-  }
-}
-
-void TebOptimalPlanner::AddEdgesVelocity()
-{
-  if (cfg_.optim.weight_max_vel_x==0 && cfg_.optim.weight_max_vel_theta==0)
-    return; // if weight equals zero skip adding edges!
-
-  std::size_t NoBandpts(teb_.sizePoses());
-  Eigen::Matrix<double,2,2> information;
-  information.fill(0);
-  information(0,0) = cfg_.optim.weight_max_vel_x;
-  information(1,1) = cfg_.optim.weight_max_vel_theta;
-
-  for (std::size_t i=0; i < NoBandpts - 1; ++i)
-  {
-    EdgeVelocity* velocity_edge = new EdgeVelocity;
-    velocity_edge->setVertex(0,teb_.PoseVertex(i));
-    velocity_edge->setVertex(1,teb_.PoseVertex(i+1));
-    velocity_edge->setVertex(2,teb_.TimeDiffVertex(i));
-    velocity_edge->setInformation(information);
-    velocity_edge->setTebConfig(cfg_);
-    optimizer_->addEdge(velocity_edge);
-  }
-}
-
-void TebOptimalPlanner::AddEdgesAcceleration()
-{
-  if (cfg_.optim.weight_acc_lim_x==0 && cfg_.optim.weight_acc_lim_theta==0) 
-    return; // if weight equals zero skip adding edges!
-
-  std::size_t NoBandpts(teb_.sizePoses());
-  Eigen::Matrix<double,2,2> information;
-  information.fill(0);
-  information(0,0) = cfg_.optim.weight_acc_lim_x;
-  information(1,1) = cfg_.optim.weight_acc_lim_theta;
-  
-  // now add the usual acceleration edge for each tuple of three teb poses
-  for (std::size_t i=0; i < NoBandpts - 2; ++i)
-  {
-    EdgeAcceleration* acceleration_edge = new EdgeAcceleration;
-    acceleration_edge->setVertex(0,teb_.PoseVertex(i));
-    acceleration_edge->setVertex(1,teb_.PoseVertex(i+1));
-    acceleration_edge->setVertex(2,teb_.PoseVertex(i+2));
-    acceleration_edge->setVertex(3,teb_.TimeDiffVertex(i));
-    acceleration_edge->setVertex(4,teb_.TimeDiffVertex(i+1));
-    acceleration_edge->setInformation(information);
-    acceleration_edge->setTebConfig(cfg_);
-    optimizer_->addEdge(acceleration_edge);
-  }
-    
-}
-
-void TebOptimalPlanner::AddEdgesTimeOptimal()
-{
-  Eigen::Matrix<double,1,1> information;
-  information.fill(cfg_.optim.weight_optimaltime);
-
-  for (std::size_t i=0; i < teb_.sizeTimeDiffs(); ++i)
-  {
-    EdgeTimeOptimal* timeoptimal_edge = new EdgeTimeOptimal;
-    timeoptimal_edge->setVertex(0,teb_.TimeDiffVertex(i));
-    timeoptimal_edge->setInformation(information);
-    timeoptimal_edge->setTebConfig(cfg_);
-    optimizer_->addEdge(timeoptimal_edge);
-  }
-}
-
-void TebOptimalPlanner::AddEdgesKinematicsCarlike()
-{
-  if (cfg_.optim.weight_kinematics_nh==0 && cfg_.optim.weight_kinematics_turning_radius)
-    return; // if weight equals zero skip adding edges!
-  
-  Eigen::Matrix<double,2,2> information_kinematics;
-  information_kinematics.fill(0.0);
-  information_kinematics(0, 0) = cfg_.optim.weight_kinematics_nh;
-  information_kinematics(1, 1) = cfg_.optim.weight_kinematics_turning_radius;
-  
-  for (unsigned int i=0; i < teb_.sizePoses()-1; i++) // ignore twiced start only
-  {
-    EdgeKinematicsCarlike* kinematics_edge = new EdgeKinematicsCarlike;
-    kinematics_edge->setVertex(0,teb_.PoseVertex(i));
-    kinematics_edge->setVertex(1,teb_.PoseVertex(i+1));
-    kinematics_edge->setInformation(information_kinematics);
-    kinematics_edge->setTebConfig(cfg_);
-    optimizer_->addEdge(kinematics_edge);
-  }
-}
-
-void TebOptimalPlanner::AddEdgesViaPoints()
-{
-  if (cfg_.optim.weight_viapoint==0 || via_points_==NULL || via_points_->empty() )
-    return; 
-
-  int start_pose_idx = 0;
-  
-  int n = (int)teb_.sizePoses();
-  if (n<3) 
-    return;
-  
-  for (ViaPointContainer::const_iterator vp_it = via_points_->begin(); vp_it != via_points_->end(); ++vp_it)
-  {
-    int index = teb_.findClosestTrajectoryPose(*vp_it, NULL, start_pose_idx);
-    if (cfg_.trajectory.via_points_ordered)
-      start_pose_idx = index+2; 
-     
-    if ( index > n-2 ) 
-      index = n-2;
-    if ( index < 1)
-      index = 1;
-
-    Eigen::Matrix<double,1,1> information;
-    information.fill(cfg_.optim.weight_viapoint);
-    
-    EdgeViaPoint* edge_viapoint = new EdgeViaPoint;
-    edge_viapoint->setVertex(0,teb_.PoseVertex(index));
-    edge_viapoint->setInformation(information);
-    edge_viapoint->setParameters(cfg_, &(*vp_it));
-    optimizer_->addEdge(edge_viapoint);   
-  }
-}
-
-void TebOptimalPlanner::registerG2OTypes()
-{
-  g2o::Factory* factory = g2o::Factory::instance();
-  factory->registerType("VERTEX_POSE", new g2o::HyperGraphElementCreator<VertexPose>);
-  factory->registerType("VERTEX_TIMEDIFF", new g2o::HyperGraphElementCreator<VertexTimeDiff>);
-
-  factory->registerType("EDGE_TIME_OPTIMAL", new g2o::HyperGraphElementCreator<EdgeTimeOptimal>);
-  factory->registerType("EDGE_VELOCITY", new g2o::HyperGraphElementCreator<EdgeVelocity>);
-  factory->registerType("EDGE_ACCELERATION", new g2o::HyperGraphElementCreator<EdgeAcceleration>);
-  factory->registerType("EDGE_ACCELERATION_START", new g2o::HyperGraphElementCreator<EdgeAccelerationStart>);
-  factory->registerType("EDGE_ACCELERATION_GOAL", new g2o::HyperGraphElementCreator<EdgeAccelerationGoal>);
-  factory->registerType("EDGE_KINEMATICS_CARLIKE", new g2o::HyperGraphElementCreator<EdgeKinematicsCarlike>);
-  factory->registerType("EDGE_VIA_POINT", new g2o::HyperGraphElementCreator<EdgeViaPoint>);
-  return;
-}
-
-void TebOptimalPlanner::printTeb()
-{
-  for (unsigned int i=0; i < teb_.sizePoses(); i++)
-  {
-    printf("(%5f,%5f,%5f)\n",(double)teb_.Pose(i).x(),(double)teb_.Pose(i).y(),(double)teb_.Pose(i).theta());
-  }
-}
-
-void TebOptimalPlanner::clearPlanner() 
-{
-  clearGraph();
-  teb_.clearTimedElasticBand();
-}
-
-void TebOptimalPlanner::setViaPoints(const std::vector<PoseSE2>& initial_plan)
-{
-  int length = initial_plan.size();
-  double x = 0.0;
-  double y = 0.0;
-  for(int i=0; i<length; i++)
-  {
-    x = initial_plan[i].x();
-    y = initial_plan[i].y();
-    via_points.push_back(Eigen::Vector2d(x, y));
-  }
-}
-
-void TebOptimalPlanner::g2oInitNewVersion()
-{
-  // optimizer_ = boost::make_shared<g2o::SparseOptimizer>();
-  // optimizer_->setVerbose(false);
-  // TEBLinearSolver* linearSolver = new TEBLinearSolver(); 
-  // linearSolver->setBlockOrdering(true);
-  
-  // g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(
-  //   g2o::make_unique<TEBBlockSolver>(g2o::make_unique<TEBLinearSolver>()));
-  // optimizer_->setVerbose(false);
-  // optimizer_->setAlgorithm(solver);
-  // optimizer_->initMultiThreading(); // required for >Eigen 3.1
-}
-
-void TebOptimalPlanner::g2oInitOldVersion()
-{
-  optimizer_ = boost::make_shared<g2o::SparseOptimizer>();
-  TEBLinearSolver* linearSolver = new TEBLinearSolver(); // see typedef in optimization.h
-  //linearSolver->setBlockOrdering(true);
-  TEBBlockSolver* blockSolver = new TEBBlockSolver(linearSolver);
-  g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(blockSolver);
-  optimizer_->setAlgorithm(solver);
-  optimizer_->initMultiThreading(); // required for >Eigen 3.1
-}
-
-void TebOptimalPlanner::mapToEmpty()
-{
-  m_map_width = (unsigned int)map.size().width;
-  m_map_height = (unsigned int)map.size().height;
-
-  cout<<"m_map_width  "<<m_map_width<<endl;
-  cout<<"m_map_height "<<m_map_height<<endl;
-
-  for(unsigned int y=0; y<m_map_height; y++)
-      for(unsigned int x=0; x<m_map_width; x++)
-  {
-      map.data[x+y*m_map_width] = 255;
-  }
-}
-
-void TebOptimalPlanner::mapShow()
-{
-  cv::imshow( "Display window", map );  
-  cv::waitKey(0);
-  cv::destroyWindow("Display window");
-}
-
-void TebOptimalPlanner::mapChange(const std::vector<PoseSE2>& initial_plan)
-{
-  int length = initial_plan.size();
-  int x = 0;
-  int y = 0;
-  for(int i=0; i<length; i++)
-  {
-    x = round(initial_plan[i].x() * 10.0);
-    y = round(200 + initial_plan[i].y() * 10.0);
-    // if(x>m_map_height || y>m_map_width)
-    //   continue;
-    map.data[y+x*m_map_width] = 0;
-  }
-}
-
-void TebOptimalPlanner::mapChange()
-{
-  unsigned int length = teb_.sizePoses();
-  int x = 0;
-  int y = 0;
-  for (unsigned int i=0; i < length; i++)
-  {
-    x = round(teb_.Pose(i).x() * 10.0);
-    y = round(200 + teb_.Pose(i).y() * 10.0);
-    // if(x>m_map_height || y>m_map_width)
-    //   continue;
-    map.data[y+x*m_map_width] = 0;
-  }
-}
-
-void TebOptimalPlanner::show()
-{
-  this->visual->publishLocalPlanAndPoses(this->teb_);
-  this->visual->publishViaPoints(this->initial_plan_);
-}
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW    
+};
