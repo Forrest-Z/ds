@@ -1,179 +1,119 @@
 
 #pragma once
 
-#include "g2o/stuff/misc.h"
 #include <Eigen/Core>
-#include "misc.h"
+#include <Eigen/StdVector>
 
-class PoseSE2
+#define USE_ANALYTIC_JACOBI // if available for a specific edge, use analytic jacobi 
+
+class TebConfig
 {
 public:
-  PoseSE2()
-  {
-    setZero();
-  }      
-  PoseSE2(const Eigen::Ref<const Eigen::Vector2d>& position, double theta)
-  {
-      _position = position;
-      _theta = theta;
-  }
-  
-  PoseSE2(double x, double y, double theta)
-  {
-      _position.coeffRef(0) = x;
-      _position.coeffRef(1) = y;
-      _theta = theta;
-  }
-  
-  PoseSE2(const PoseSE2& pose)
-  {
-      _position = pose._position;
-      _theta = pose._theta;
-  }
-	
-  ~PoseSE2() {}
 
-  Eigen::Vector2d& position() {return _position;}
+  //! Trajectory related parameters
+  struct Trajectory
+  {
+    double dt_ref; //!< Desired temporal resolution of the trajectory (should be in the magnitude of the underlying control rate)
+    double dt_hysteresis; //!< Hysteresis for automatic resizing depending on the current temporal resolution (dt): usually 10% of dt_ref
+    int min_samples; //!< Minimum number of samples (should be always greater than 2)
+    bool global_plan_overwrite_orientation; //!< Overwrite orientation of local subgoals provided by the global planner
+    double global_plan_viapoint_sep; //!< Min. separation between each two consecutive via-points extracted from the global plan (if negative: disabled)
+    bool via_points_ordered; //!< If true, the planner adheres to the order of via-points in the storage container
+    double max_global_plan_lookahead_dist; //!< Specify maximum length (cumulative Euclidean distances) of the subset of the global plan taken into account for optimization [if <=0: disabled; the length is also bounded by the local costmap size!]
+    double force_reinit_new_goal_dist; //!< Reinitialize the trajectory if a previous goal is updated with a seperation of more than the specified value in meters (skip hot-starting)
+    int feasibility_check_no_poses; //!< Specify up to which pose on the predicted plan the feasibility should be checked each sampling interval.
+    bool shrink_horizon_backup; //!< Allows the planner to shrink the horizon temporary (50%) in case of automatically detected issues.
+  } trajectory; //!< Trajectory related parameters
+    
+  //! Robot related parameters
+  struct Robot
+  {
+    double max_vel_x; //!< Maximum translational velocity of the robot
+    double max_vel_x_backwards; //!< Maximum translational velocity of the robot for driving backwards
+    double max_vel_theta; //!< Maximum angular velocity of the robot
+    double acc_lim_x; //!< Maximum translational acceleration of the robot
+    double acc_lim_theta; //!< Maximum angular acceleration of the robot
+    double min_turning_radius; //!< Minimum turning radius of a carlike robot (diff-drive robot: zero); 
+    double wheelbase; //!< The distance between the drive shaft and steering axle (only required for a carlike robot with 'cmd_angle_instead_rotvel' enabled); The value might be negative for back-wheeled robots!
+    bool cmd_angle_instead_rotvel; //!< Substitute the rotational velocity in the commanded velocity message by the corresponding steering angle (check 'axles_distance')
+  } robot; //!< Robot related parameters
+  
+  //! Goal tolerance related parameters
+  struct GoalTolerance
+  {
+    double yaw_goal_tolerance; //!< Allowed final orientation error
+    double xy_goal_tolerance; //!< Allowed final euclidean distance to the goal position
+    bool free_goal_vel; //!< Allow the robot's velocity to be nonzero (usally max_vel) for planning purposes
+  } goal_tolerance; //!< Goal tolerance related parameters
 
-  const Eigen::Vector2d& position() const {return _position;}
-  
-  double& x() {return _position.coeffRef(0);}
-  
-  const double& x() const {return _position.coeffRef(0);}
-  
-  double& y() {return _position.coeffRef(1);}
-  
-  const double& y() const {return _position.coeffRef(1);}
-  
-  double& theta() {return _theta;}
-  
-  const double& theta() const {return _theta;}
-  
-  void setZero()
-  {
-    _position.setZero();
-    _theta = 0;
-  }
-  
-  /**
-   * @brief Return the unit vector of the current orientation
-   * @returns [cos(theta), sin(theta))]^T
-   */  
-  Eigen::Vector2d orientationUnitVec() const {return Eigen::Vector2d(std::cos(_theta), std::sin(_theta));}
-      
-  ///@}
 
-      
-  /** @name Arithmetic operations for which operators are not always reasonable */
-  ///@{ 
   
-  /**
-    * @brief Scale all SE2 components (x,y,theta) and normalize theta afterwards to [-pi, pi]
-    * @param factor scale factor
-    */ 
-  void scale(double factor)
+  //! Optimization related parameters
+  struct Optimization
   {
-    _position *= factor;
-    _theta = g2o::normalize_theta( _theta*factor );
-  }
-	  
-  /**
-    * @brief Increment the pose by adding a double[3] array
-    * The angle is normalized afterwards
-    * @param pose_as_array 3D double array [x, y, theta]
-    */ 
-  void plus(const double* pose_as_array)
-  {
-    _position.coeffRef(0) += pose_as_array[0];
-    _position.coeffRef(1) += pose_as_array[1];
-    _theta = g2o::normalize_theta( _theta + pose_as_array[2] );
-  }
+    int no_inner_iterations; //!< Number of solver iterations called in each outerloop iteration
+    int no_outer_iterations; //!< Each outerloop iteration automatically resizes the trajectory and invokes the internal optimizer with no_inner_iterations
+    
+    bool optimization_verbose; //!< Print verbose information
+    
+    double penalty_epsilon; //!< Add a small safety margin to penalty functions for hard-constraint approximations
+    
+    double weight_max_vel_x; //!< Optimization weight for satisfying the maximum allowed translational velocity
+    double weight_max_vel_theta; //!< Optimization weight for satisfying the maximum allowed angular velocity
+    double weight_acc_lim_x; //!< Optimization weight for satisfying the maximum allowed translational acceleration
+    double weight_acc_lim_theta; //!< Optimization weight for satisfying the maximum allowed angular acceleration
+    double weight_kinematics_nh; //!< Optimization weight for satisfying the non-holonomic kinematics
+    double weight_kinematics_forward_drive; //!< Optimization weight for forcing the robot to choose only forward directions (positive transl. velocities, only diffdrive robot)
+    double weight_kinematics_turning_radius; //!< Optimization weight for enforcing a minimum turning radius (carlike robots)
+    double weight_optimaltime; //!< Optimization weight for contracting the trajectory w.r.t transition time
+    double weight_viapoint; //!< Optimization weight for minimizing the distance to via-points
+  } optim; //!< Optimization related parameters
   
-  /**
-    * @brief Get the mean / average of two poses and store it in the caller class
-    * For the position part: 0.5*(x1+x2)
-    * For the angle: take the angle of the mean direction vector
-    * @param pose1 first pose to consider
-    * @param pose2 second pose to consider
-    */ 
-  void averageInPlace(const PoseSE2& pose1, const PoseSE2& pose2)
+  TebConfig()
   {
-    _position = (pose1._position + pose2._position)/2;
-    _theta = g2o::average_angle(pose1._theta, pose2._theta);
+    
+    // Trajectory
+    trajectory.dt_ref = 0.3;
+    trajectory.dt_hysteresis = 0.1;
+    trajectory.min_samples = 3;
+    trajectory.global_plan_overwrite_orientation = true;
+    trajectory.global_plan_viapoint_sep = -1;
+    trajectory.via_points_ordered = false;
+    trajectory.max_global_plan_lookahead_dist = 1;
+    trajectory.force_reinit_new_goal_dist = 1;
+    trajectory.feasibility_check_no_poses = 5;
+    trajectory.shrink_horizon_backup = true;
+    
+    // Robot
+    robot.max_vel_x = 0.8;
+    robot.max_vel_x_backwards = 0.4;
+    robot.max_vel_theta = 0.5;
+    robot.acc_lim_x = 0.5;
+    robot.acc_lim_theta = 0.5;
+    robot.min_turning_radius = 1.5;
+    robot.wheelbase = 1.0;
+    robot.cmd_angle_instead_rotvel = false;
+    
+    // GoalTolerance
+    
+    goal_tolerance.xy_goal_tolerance = 0.2;
+    goal_tolerance.yaw_goal_tolerance = 0.2;
+    goal_tolerance.free_goal_vel = true;
+    
+    // Optimization
+    
+    optim.no_inner_iterations = 5;
+    optim.no_outer_iterations = 4;
+    optim.optimization_verbose = false;
+    optim.penalty_epsilon = 0.1;
+    optim.weight_max_vel_x = 2; //1
+    optim.weight_max_vel_theta = 10;
+    optim.weight_acc_lim_x = 1;
+    optim.weight_acc_lim_theta = 1;
+    optim.weight_kinematics_nh = 1000;
+    optim.weight_kinematics_forward_drive = 1;
+    optim.weight_kinematics_turning_radius = 10;
+    optim.weight_optimaltime = 0;
+    optim.weight_viapoint = 0;
   }
-  
-  /**
-    * @brief Get the mean / average of two poses and return the result (static)
-    * For the position part: 0.5*(x1+x2)
-    * For the angle: take the angle of the mean direction vector
-    * @param pose1 first pose to consider
-    * @param pose2 second pose to consider
-    * @return mean / average of \c pose1 and \c pose2
-    */ 
-  static PoseSE2 average(const PoseSE2& pose1, const PoseSE2& pose2)
-  {
-    return PoseSE2( (pose1._position + pose2._position)/2 , g2o::average_angle(pose1._theta, pose2._theta) );
-  }
-  
-  PoseSE2& operator=( const PoseSE2& rhs ) 
-  {
-    if (&rhs != this)
-    {
-    	_position = rhs._position;
-    	_theta = rhs._theta;
-    }
-    return *this;
-  }
-
-  PoseSE2& operator+=(const PoseSE2& rhs)
-  {
-    _position += rhs._position;
-    _theta = g2o::normalize_theta(_theta + rhs._theta);
-    return *this;
-  }
-  
-  friend PoseSE2 operator+(PoseSE2 lhs, const PoseSE2& rhs) 
-  {
-    return lhs += rhs;
-  }
-  
-  PoseSE2& operator-=(const PoseSE2& rhs)
-  {
-    _position -= rhs._position;
-    _theta = g2o::normalize_theta(_theta - rhs._theta);
-    return *this;
-  }
-  
-  friend PoseSE2 operator-(PoseSE2 lhs, const PoseSE2& rhs) 
-  {
-    return lhs -= rhs;
-  }
-  
-  friend PoseSE2 operator*(PoseSE2 pose, double scalar) 
-  {
-    pose._position *= scalar;
-    pose._theta *= scalar;
-    return pose;
-  }
-  
-  friend PoseSE2 operator*(double scalar, PoseSE2 pose) 
-  {
-    pose._position *= scalar;
-    pose._theta *= scalar;
-    return pose;
-  }
-  
-	friend std::ostream& operator<< (std::ostream& stream, const PoseSE2& pose)
-	{
-		stream << "x: " << pose._position[0] << " y: " << pose._position[1] << " theta: " << pose._theta;
-    return stream;
-	}
-      
-private:
-  
-  Eigen::Vector2d _position; 
-  double _theta;
-      
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW  
 };
