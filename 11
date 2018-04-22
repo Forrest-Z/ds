@@ -1,82 +1,95 @@
+
 #pragma once
 
-#include "g2o_types/vertex_pose.h"
-#include "teb_config.h"
+#include <cmath>
+#include <Eigen/Core>
+#include <g2o/stuff/misc.h>
 
-#include "g2o/core/base_unary_edge.h"
 
-
-/**
- * @class EdgeViaPoint
- * @brief Edge defining the cost function for pushing a configuration towards a via point
- * 
- * The edge depends on a single vertex \f$ \mathbf{s}_i \f$ and minimizes: \n
- * \f$ \min  dist2point \cdot weight \f$. \n
- * \e dist2point denotes the distance to the via point. \n
- * \e weight can be set using setInformation(). \n
- * @see TebOptimalPlanner::AddEdgesViaPoints
- * @remarks Do not forget to call setTebConfig() and setViaPoint()
- */     
-class EdgeViaPoint : public g2o::BaseUnaryEdge<1, const Eigen::Vector2d*, VertexPose>
+inline double penaltyBoundToInterval(const double& var,const double& a,const double& epsilon)
 {
-public:
-    
-  EdgeViaPoint() 
+  if (var < -a+epsilon)
   {
-    _measurement = NULL;
-    _vertices[0] = NULL;
+    return (-var - (a - epsilon));
   }
+  if (var <= a-epsilon)
+  {
+    return 0.;
+  }
+  else
+  {
+    return (var - (a - epsilon));
+  }
+}
 
-  virtual ~EdgeViaPoint() 
+inline double penaltyBoundToInterval(const double& var,const double& a, const double& b, const double& epsilon)
+{
+  if (var < a+epsilon)
   {
-    if(_vertices[0]) 
-      _vertices[0]->edges().erase(this);
+    return (-var + (a + epsilon));
   }
+  if (var <= b-epsilon)
+  {
+    return 0.;
+  }
+  else
+  {
+    return (var - (b - epsilon));
+  }
+}
 
-  void computeError()
+inline double penaltyBoundFromBelow(const double& var, const double& a,const double& epsilon)
+{
+  if (var >= a+epsilon)
   {
-    const VertexPose* bandpt = static_cast<const VertexPose*>(_vertices[0]);
-    _error[0] = (bandpt->position() - *_measurement).norm();
+    return 0.;
   }
-  
-  ErrorVector& getError()
+  else
   {
-    computeError();
-    return _error;
+    return 5*(-var + (a+epsilon));//5*(-var + (a+epsilon));//thz --haha
   }
-  
-  virtual bool read(std::istream& is)
-  {
-    return true;
-  }
+}
 
-  virtual bool write(std::ostream& os) const
+inline double penaltyBoundToIntervalDerivative(const double& var,const double& a, const double& epsilon)
+{
+  if (var < -a+epsilon)
   {
-    return os.good();
+    return -1;
   }
-  
-  void setViaPoint(const Eigen::Vector2d* via_point)
+  if (var <= a-epsilon)
   {
-    _measurement = via_point;
+    return 0.;
   }
-    
-  void setTebConfig(const TebConfig& cfg)
+  else
   {
-      cfg_ = &cfg;
+    return 1;		
   }
+}
 
-  void setParameters(const TebConfig& cfg, const Eigen::Vector2d* via_point)
+inline double penaltyBoundToIntervalDerivative(const double& var,const double& a, const double& b, const double& epsilon)
+{
+  if (var < a+epsilon)
   {
-    cfg_ = &cfg;
-    _measurement = via_point;
+    return -1;
   }
-  
-protected:
+  if (var <= b-epsilon)
+  {
+    return 0.;
+  }
+  else
+  {
+    return 1;		
+  }
+}
 
-  const TebConfig* cfg_;
-  
-public: 	
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
-};
-  
+inline double penaltyBoundFromBelowDerivative(const double& var, const double& a,const double& epsilon)
+{
+  if (var >= a+epsilon)
+  {
+    return 0.;
+  }
+  else
+  {
+    return -1;
+  }
+}
