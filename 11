@@ -2,252 +2,82 @@
 #pragma once
 
 #include "g2o_types/vertex_pose.h"
-#include "g2o_types/vertex_timediff.h"
 #include "g2o_types/penalties.h"
 #include "teb_config.h"
+#include "g2o/core/base_binary_edge.h"
+#include <cmath>
 
-#include "g2o/core/base_multi_edge.h"
- 
-class EdgeAcceleration : public g2o::BaseMultiEdge<2, double>
-{
-public:  
-  EdgeAcceleration()
-  {
-    this->resize(5);
-    _vertices[0]=_vertices[1]=_vertices[2]=_vertices[3]=_vertices[4]=NULL;
-  }
    
-  virtual ~EdgeAcceleration()
-  {
-    for(unsigned int i=0;i<5;i++)
-    {
-	if(_vertices[i])
-	  _vertices[i]->edges().erase(this);
-    }
-  }
-   
-  void computeError()
-  {
-    const VertexPose* pose1 = static_cast<const VertexPose*>(_vertices[0]);
-    const VertexPose* pose2 = static_cast<const VertexPose*>(_vertices[1]);
-    const VertexPose* pose3 = static_cast<const VertexPose*>(_vertices[2]);
-    const VertexTimeDiff* dt1 = static_cast<const VertexTimeDiff*>(_vertices[3]);
-    const VertexTimeDiff* dt2 = static_cast<const VertexTimeDiff*>(_vertices[4]);
-
-    // VELOCITY & ACCELERATION
-    Eigen::Vector2d diff1 = pose2->position() - pose1->position();
-    Eigen::Vector2d diff2 = pose3->position() - pose2->position();
-    double vel1 = diff1.norm() / dt1->dt();
-    double vel2 = diff2.norm() / dt2->dt();
-    
-    vel1 *= fast_sigmoid( 100*(diff1.x()*cos(pose1->theta()) + diff1.y()*sin(pose1->theta())) ); 
-    vel2 *= fast_sigmoid( 100*(diff2.x()*cos(pose2->theta()) + diff2.y()*sin(pose2->theta())) ); 
-    
-    double acc_lin  = (vel2 - vel1)*2 / ( dt1->dt() + dt2->dt() );
-   
-
-    _error[0] = penaltyBoundToInterval(acc_lin,cfg_->robot.acc_lim_x,cfg_->optim.penalty_epsilon);
-    
-    // ANGULAR ACCELERATION
-    double omega1 = g2o::normalize_theta(pose2->theta() - pose1->theta()) / dt1->dt();
-    double omega2 = g2o::normalize_theta(pose3->theta() - pose2->theta()) / dt2->dt();
-    double acc_rot  = (omega2 - omega1)*2 / ( dt1->dt() + dt2->dt() );
-      
-    _error[1] = penaltyBoundToInterval(acc_rot,cfg_->robot.acc_lim_theta,cfg_->optim.penalty_epsilon);
-
-  }
-
-  ErrorVector& getError()
-  {
-    computeError();
-    return _error;
-  }	
-	
-  bool read(std::istream& is)
-  {
-    is >> _measurement;
-    is >> information()(0,0);	// TODO: fixme
-    return true;
-  }
-
-  bool write(std::ostream& os) const
-  {
-    os << information()(0,0) << " Error: " << _error[0] << " " << _error[1]; // TODO: fixme
-
-    return os.good();
-  }
-  
-  void setTebConfig(const TebConfig& cfg)
-  {
-    cfg_ = &cfg;
-  }
-    
-protected:
-  const TebConfig* cfg_; 
-      
-public: 
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-   
-};
-    
-class EdgeAccelerationStart : public g2o::BaseMultiEdge<2, const Eigen::Vector2d*>
+class EdgeKinematicsCarlike : public g2o::BaseBinaryEdge<2, double, VertexPose, VertexPose>
 {
 public:
-  EdgeAccelerationStart()
+
+  EdgeKinematicsCarlike()
   {
-    this->resize(3);
-    _vertices[0]=_vertices[1]=_vertices[2]=NULL;
-    _measurement = NULL;
+      this->setMeasurement(0.);
+      _vertices[0] = _vertices[1] = NULL;
   }
-  ~EdgeAccelerationStart()
+   
+  virtual ~EdgeKinematicsCarlike()
   {
-    for(unsigned int i=0;i<3;i++)
+    for(unsigned int i=0;i<2;i++) 
     {
-      if(_vertices[i]) 
+      if(_vertices[i])
         _vertices[i]->edges().erase(this);
     }
   }
-  
+ 
   void computeError()
   {
-    const VertexPose* pose1 = static_cast<const VertexPose*>(_vertices[0]);
-    const VertexPose* pose2 = static_cast<const VertexPose*>(_vertices[1]);
-    const VertexTimeDiff* dt = static_cast<const VertexTimeDiff*>(_vertices[2]);
+    const VertexPose* conf1 = static_cast<const VertexPose*>(_vertices[0]);
+    const VertexPose* conf2 = static_cast<const VertexPose*>(_vertices[1]);
+    
+    Eigen::Vector2d deltaS = conf2->position() - conf1->position();
 
-    // VELOCITY & ACCELERATION
-    Eigen::Vector2d diff = pose2->position() - pose1->position();
-    double vel1 = _measurement->coeffRef(0);
-    double vel2 = diff.norm() / dt->dt();
+    // non holonomic constraint
+    _error[0] = fabs( ( cos(conf1->theta())+cos(conf2->theta()) ) * deltaS[1] - ( sin(conf1->theta())+sin(conf2->theta()) ) * deltaS[0] );
 
-    // consider directions
-    vel2 *= fast_sigmoid( 100*(diff.x()*cos(pose1->theta()) + diff.y()*sin(pose1->theta())) ); 
-    
-    double acc_lin  = (vel2 - vel1) / dt->dt();
-    
-    _error[0] = penaltyBoundToInterval(acc_lin,cfg_->robot.acc_lim_x,cfg_->optim.penalty_epsilon);
-    
-    // ANGULAR ACCELERATION
-    double omega1 = _measurement->coeffRef(1);
-    double omega2 = g2o::normalize_theta(pose2->theta() - pose1->theta()) / dt->dt();
-    double acc_rot  = (omega2 - omega1) / dt->dt();
-      
-    _error[1] = penaltyBoundToInterval(acc_rot,cfg_->robot.acc_lim_theta,cfg_->optim.penalty_epsilon);
+    // limit minimum turning radius
+    double omega_t = g2o::normalize_theta( conf2->theta() - conf1->theta() );
+    if (omega_t == 0)
+      _error[1] = 0; // straight line motion
+    else
+      _error[1] = penaltyBoundFromBelow(deltaS.norm() / fabs(omega_t), cfg_->robot.min_turning_radius, 0.0); 
+    // This edge is not affected by the epsilon parameter, the user might add an exra margin to the min_turning_radius parameter.
   }
-  
+        
   ErrorVector& getError()
   {
     computeError();
     return _error;
-  }	
-	
-  bool read(std::istream& is)
+  }
+
+  virtual bool read(std::istream& is)
   {
-    is >> information()(0,0);	// TODO: fixme
+    is >> _measurement;
+    //inverseMeasurement() = measurement() * -1;
+    is >> information()(0,0);
     return true;
   }
 
-  bool write(std::ostream& os) const
+  virtual bool write(std::ostream& os) const
   {
-    os << information()(0,0) << " Error: " << _error[0] << " " << _error[1]; // TODO: fixme
+    //os << measurement() << " ";
+    os << information()(0,0) << " Error NH-Constraint: " << _error[0] << ", Error PosDriveDir: " << _error[1];
     return os.good();
   }
-   
-  void setInitialVelocity(const Eigen::Vector2d& vel_start)
-  {
-    _measurement = &vel_start;
-  }
-   
-  void setTebConfig(const TebConfig& cfg)
-  {
-      cfg_ = &cfg;
-  }
-    
-protected:  
-  const TebConfig* cfg_; //!< Store TebConfig class for parameters
-      
-public:       
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-};    
-    
-class EdgeAccelerationGoal : public g2o::BaseMultiEdge<2, const Eigen::Vector2d*>
-{
-public: 
-  EdgeAccelerationGoal()
-  {
-    _measurement = NULL;
-    this->resize(3);
-    _vertices[0]=_vertices[1]=_vertices[2]=NULL;
-  }
-   
-  ~EdgeAccelerationGoal()
-  {
-    for(unsigned int i=0;i<3;i++)
-    {
-      if(_vertices[i])
-	_vertices[i]->edges().erase(this);
-    }
-  }
 
-  void computeError()
-  {
-    const VertexPose* pose_pre_goal = static_cast<const VertexPose*>(_vertices[0]);
-    const VertexPose* pose_goal = static_cast<const VertexPose*>(_vertices[1]);
-    const VertexTimeDiff* dt = static_cast<const VertexTimeDiff*>(_vertices[2]);
-
-    // VELOCITY & ACCELERATION
-    Eigen::Vector2d diff = pose_goal->position() - pose_pre_goal->position();    
-    double vel1 = diff.norm() / dt->dt();
-    double vel2 = _measurement->coeffRef(0);
-    
-    // consider directions
-    vel1 *= fast_sigmoid( 100*(diff.x()*cos(pose_pre_goal->theta()) + diff.y()*sin(pose_pre_goal->theta())) ); 
-    
-    double acc_lin  = (vel2 - vel1) / dt->dt();
-
-    _error[0] = penaltyBoundToInterval(acc_lin,cfg_->robot.acc_lim_x,cfg_->optim.penalty_epsilon);
-    
-    // ANGULAR ACCELERATION
-    double omega1 = g2o::normalize_theta(pose_goal->theta() - pose_pre_goal->theta()) / dt->dt();
-    double omega2 = _measurement->coeffRef(1);
-    double acc_rot  = (omega2 - omega1) / dt->dt();
-      
-    _error[1] = penaltyBoundToInterval(acc_rot,cfg_->robot.acc_lim_theta,cfg_->optim.penalty_epsilon);
-
-  }
-  
-  ErrorVector& getError()
-  {
-    computeError();
-    return _error;
-  }  
-	
-  bool read(std::istream& is)
-  {
-    is >> information()(0,0);	// TODO: fixme
-    return true;
-  }
-
-  bool write(std::ostream& os) const
-  {
-    os << information()(0,0) << " Error: " << _error[0] << " " << _error[1]; // TODO: fixme
-
-    return os.good();
-  }
-  
-  void setGoalVelocity(const Eigen::Vector2d& vel_goal)
-  {
-    _measurement = &vel_goal;
-  }
-  
   void setTebConfig(const TebConfig& cfg)
   {
     cfg_ = &cfg;
   }
 
 protected:
+  
   const TebConfig* cfg_; //!< Store TebConfig class for parameters
+  
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW   
+};
 
-public: 
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-}; 
-    
+
