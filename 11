@@ -1,45 +1,215 @@
-cmake_minimum_required(VERSION 2.8)
-project(test_stage)
 
-set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11 -O3")
+#include <ros/ros.h>
+#include <visualization_msgs/Marker.h>
+#include <iostream>
+#include <vector>
+#include <stdio.h>   
+#include <stdlib.h>                         
+#include <sys/time.h>   
+#include <unistd.h> 
+#include <tuple> 
 
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
-  geometry_msgs
-  tf
-)
+#include "constants.h"
+#include "custom_types.h"
+#include "reference_trajectory_planning.h"
+#include "collision_detection.h"
 
-find_package(OpenCV REQUIRED)
+//rosrun --prefix "gdb -ex run -args" apollo_dream apollo_node
+using namespace Constants;
+using namespace std;
 
-catkin_package()
+void setObstacles(std::vector<std::vector<thz::Point>> &obstacles);
+void markerInit(visualization_msgs::Marker& marker);
+int  timeval_subtract(struct timeval* result, struct timeval* x, struct timeval* y);
 
-file(GLOB test_src
-  "src/*.cpp"
-)
+void publishPoints(const ros::Publisher& pub, int showType, std::tuple<double,double,double,double,double,double> feature, 
+                   const std::vector<thz::Point>& points);
+void publishLines(const ros::Publisher& pub, int showType, std::tuple<double,double,double,double,double,double> feature, 
+                   const std::vector<thz::Point>& points);
+std::vector<thz::Point> convert_2d_to_1d_points(const std::vector<std::vector<thz::Vertex>>& points_2d);
+std::vector<thz::Point> convert_2d_to_1d_points(const std::vector<std::vector<thz::Point>>& points_2d);
 
-include_directories(
-  ${catkin_INCLUDE_DIRS}
-  /usr/include/suitesparse
-  /usr/include/eigen3
-  /opt/ros/jade/include
-  src
-  src/g2o_types
-)
-link_directories(
-  /opt/ros/jade/lib
-)
+int main(int argc, char **argv)
+{
+    ros::init(argc, argv, "apollo_dream_node");
+    ros::NodeHandle nh;
+    ros::Publisher reference_lane_pub = nh.advertise<visualization_msgs::Marker>("marker_key_points", 1);
+    ros::Publisher seeds_pub          = nh.advertise<visualization_msgs::Marker>("marker_seeds", 1);
+    ros::Publisher line_strip_pub     = nh.advertise<visualization_msgs::Marker>("marker_line_strip", 1);
+    ros::Publisher obstacles_pub      = nh.advertise<visualization_msgs::Marker>("marker_obstacle", 1);
+    ros::Publisher spline_pub         = nh.advertise<visualization_msgs::Marker>("marker_spline", 1);
 
-add_executable(test_node ${test_src})
-target_link_libraries(test_node
-  ${catkin_LIBRARIES}
-  g2o_core 
-  g2o_stuff
-  g2o_solver_csparse 
-  g2o_solver_cholmod
-  g2o_csparse_extension
-  cxsparse
-  ${OpenCV_LIBS}
-)
+    struct timeval t_start,t_end; 
+    long cost_time = 0; 
+    gettimeofday(&t_start, NULL); 
+    long start = ((long)t_start.tv_sec)*1000+(long)t_start.tv_usec/1000;
+
+    double time_begin =ros::Time::now().toSec();
+    
+    std::vector<std::vector<thz::Point>> obstacles;
+    setObstacles(obstacles);
+    CollisionDetection collisionDetection;
+    collisionDetection.obstaclesUpdate(obstacles);
+
+    ReferenceTrajectoryPlanning rtp(&collisionDetection);
+    std::vector<thz::Point> lanePoints;
+
+    thz::Point ss(0,0,0);
+    thz::Point gg(3,0,0);
+    std::vector<thz::Point> spline_points = rtp.generatePath(ss,gg);
+
+    gettimeofday(&t_end, NULL); 
+    long end = ((long)t_end.tv_sec)*1000+(long)t_end.tv_usec/1000; 
+    cost_time = end - start; 
+    double time_end =ros::Time::now().toSec();
+
+    ros::Rate r(1);
+    while (ros::ok())
+    {
+        printf("\nlinux: cost time: %ld ms\n", cost_time); 
+        printf("  ros: cost time: %f\n",(time_end-time_begin)*1000.0);
+
+        //生成的原始避障路径(折线)
+        publishLines ( line_strip_pub, 
+                       visualization_msgs::Marker::LINE_STRIP,
+                       make_tuple(0.1,0.1,0,0,1,1), 
+                       rtp.testKeyPoints);
+        //原始参考路线
+        publishPoints( reference_lane_pub, 
+                       visualization_msgs::Marker::LINE_STRIP, 
+                       make_tuple(0.1,0.1,0,0.5,1,1), 
+                       rtp.m_lanePoints);
+        //撒的种子点
+        publishPoints( seeds_pub, 
+                       visualization_msgs::Marker::POINTS, 
+                       make_tuple(0.1,0.1,0,1,1,1), 
+                       convert_2d_to_1d_points(rtp.testSeeds));
+        //障碍物点
+        publishPoints( obstacles_pub, 
+                       visualization_msgs::Marker::POINTS, 
+                       make_tuple(0.1,0.1,1,0,0,1), 
+                       convert_2d_to_1d_points(obstacles));
+        //优化后的曲线
+        publishPoints( spline_pub, 
+                       visualization_msgs::Marker::POINTS, 
+                       make_tuple(0.1,0.1,0,1,0,1), 
+                       spline_points);
+
+        r.sleep();
+    }
+
+    return 0;
+}
+
+void setObstacles(std::vector<std::vector<thz::Point>> &obstacles)
+{
+    std::vector<thz::Point> v1;
+    std::vector<thz::Point> v2;
+    for(int i=0; i<8; ++i)
+    {
+        v1.push_back(thz::Point(1.0, 0.1*i-0.4,0.0));
+    }
+    for(int i=0; i<8; ++i)
+    {
+        // v2.push_back(thz::Point(2.5, 0.1*i-0.4,0.0));
+    }
+    obstacles.push_back(v1);
+    obstacles.push_back(v2);
+}
+
+
+//Show in the RVIZ
+void markerInit(visualization_msgs::Marker& marker)
+{
+    marker.header.frame_id = "/base_link";
+    marker.header.stamp =  ros::Time::now();
+    marker.ns = "points_and_lines";
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.orientation.w =  1.0;
+    marker.id = 1;
+}
+
+void publishPoints(const ros::Publisher& pub, int showType, std::tuple<double,double,double,double,double,double> feature, 
+                   const std::vector<thz::Point>& points)
+{
+    visualization_msgs::Marker marker;
+    markerInit(marker);
+
+    marker.type = showType;
+
+    marker.scale.x = std::get<0>(feature);
+    marker.scale.y = std::get<1>(feature);
+
+    marker.color.r = std::get<2>(feature);
+    marker.color.g = std::get<3>(feature);
+    marker.color.b = std::get<4>(feature);
+    marker.color.a = std::get<5>(feature);
+
+    for(int i=0; i<points.size(); ++i)
+    {
+        geometry_msgs::Point p;
+        p.x = points[i].x;
+        p.y = points[i].y;
+        p.z = 0.0;
+        marker.points.push_back(p);
+    }
+    pub.publish(marker);
+}
+
+void publishLines(const ros::Publisher& pub, int showType, std::tuple<double,double,double,double,double,double> feature, 
+                   const std::vector<thz::Point>& points)
+{
+    visualization_msgs::Marker  marker;
+    markerInit(marker);
+    marker.type = showType;
+    marker.scale.x = std::get<0>(feature);
+
+    marker.color.r = std::get<2>(feature);
+    marker.color.g = std::get<3>(feature);
+    marker.color.b = std::get<4>(feature);
+    marker.color.a = std::get<5>(feature);
+
+    for(int i=0; i<points.size(); ++i)
+    {
+        geometry_msgs::Point p;
+        p.x = points[i].x;
+        p.y = points[i].y;
+        p.z = 0.0;
+        marker.points.push_back(p);
+    }
+    pub.publish(marker);
+}
+
+std::vector<thz::Point> convert_2d_to_1d_points(const std::vector<std::vector<thz::Vertex>>& points_2d)
+{
+    std::vector<thz::Point> points;
+    for(int i=0; i<points_2d.size(); ++i)
+    {
+        for(int j=0; j<points_2d[i].size(); ++j)
+        {
+            thz::Point p;
+            p.x = points_2d[i][j].point.x;
+            p.y = points_2d[i][j].point.y;
+            p.yaw = 0.0;
+            points.push_back(p);
+        }    
+    }
+    return points;
+}
+
+std::vector<thz::Point> convert_2d_to_1d_points(const std::vector<std::vector<thz::Point>>& points_2d)
+{
+    std::vector<thz::Point> points;
+    for(int i=0; i<points_2d.size(); ++i)
+    {
+        for(int j=0; j<points_2d[i].size(); ++j)
+        {
+            thz::Point p;
+            p.x = points_2d[i][j].x;
+            p.y = points_2d[i][j].y;
+            p.yaw = 0.0;
+            points.push_back(p);
+        }    
+    }
+    return points;
+}
