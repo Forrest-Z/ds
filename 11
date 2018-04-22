@@ -1,79 +1,82 @@
 #pragma once
 
 #include "g2o_types/vertex_pose.h"
-#include "g2o_types/vertex_timediff.h"
-#include "g2o_types/penalties.h"
 #include "teb_config.h"
 
-#include <g2o/core/base_multi_edge.h>
-
-#include <iostream>
-#include "misc.h"
+#include "g2o/core/base_unary_edge.h"
 
 
-class EdgeVelocity : public g2o::BaseMultiEdge<2, double>
+/**
+ * @class EdgeViaPoint
+ * @brief Edge defining the cost function for pushing a configuration towards a via point
+ * 
+ * The edge depends on a single vertex \f$ \mathbf{s}_i \f$ and minimizes: \n
+ * \f$ \min  dist2point \cdot weight \f$. \n
+ * \e dist2point denotes the distance to the via point. \n
+ * \e weight can be set using setInformation(). \n
+ * @see TebOptimalPlanner::AddEdgesViaPoints
+ * @remarks Do not forget to call setTebConfig() and setViaPoint()
+ */     
+class EdgeViaPoint : public g2o::BaseUnaryEdge<1, const Eigen::Vector2d*, VertexPose>
 {
-public:    
-  EdgeVelocity()
+public:
+    
+  EdgeViaPoint() 
   {
-    this->resize(3); // Since we derive from a g2o::BaseMultiEdge, set the desired number of vertices
-    for(unsigned int i=0;i<3;i++) _vertices[i] = NULL;
+    _measurement = NULL;
+    _vertices[0] = NULL;
   }
-  
-  virtual ~EdgeVelocity()
+
+  virtual ~EdgeViaPoint() 
   {
-    for(unsigned int i=0;i<3;i++)
-    {
-      if(_vertices[i])
-	_vertices[i]->edges().erase(this);
-    }
+    if(_vertices[0]) 
+      _vertices[0]->edges().erase(this);
   }
 
   void computeError()
   {
-    const VertexPose* conf1 = static_cast<const VertexPose*>(_vertices[0]);
-    const VertexPose* conf2 = static_cast<const VertexPose*>(_vertices[1]);
-    const VertexTimeDiff* deltaT = static_cast<const VertexTimeDiff*>(_vertices[2]);
-    Eigen::Vector2d deltaS = conf2->estimate().position() - conf1->estimate().position();
-    double vel = deltaS.norm() / deltaT->estimate();
-    vel *= fast_sigmoid( 100 * (deltaS.x()*cos(conf1->theta()) + deltaS.y()*sin(conf1->theta())) ); // consider direction
-    
-    double omega = g2o::normalize_theta(conf2->theta() - conf1->theta()) / deltaT->estimate();
-  
-    _error[0] = penaltyBoundToInterval(vel, -cfg_->robot.max_vel_x_backwards, cfg_->robot.max_vel_x,cfg_->optim.penalty_epsilon);
-    _error[1] = penaltyBoundToInterval(omega, cfg_->robot.max_vel_theta,cfg_->optim.penalty_epsilon);
+    const VertexPose* bandpt = static_cast<const VertexPose*>(_vertices[0]);
+    _error[0] = (bandpt->position() - *_measurement).norm();
   }
- 
+  
   ErrorVector& getError()
   {
     computeError();
     return _error;
   }
-
+  
   virtual bool read(std::istream& is)
   {
-    is >> _measurement;
-    is >> information()(0,0);
     return true;
   }
- 
+
   virtual bool write(std::ostream& os) const
   {
-    //os << measurement() << " ";
-    os << information()(0,0) << " Error Vel: " << _error[0] << ", Error Omega: " << _error[1];
     return os.good();
   }
   
+  void setViaPoint(const Eigen::Vector2d* via_point)
+  {
+    _measurement = via_point;
+  }
+    
   void setTebConfig(const TebConfig& cfg)
   {
-    cfg_ = &cfg;
+      cfg_ = &cfg;
   }
 
-protected:
-  const TebConfig* cfg_; //!< Store TebConfig class for parameters
+  void setParameters(const TebConfig& cfg, const Eigen::Vector2d* via_point)
+  {
+    cfg_ = &cfg;
+    _measurement = via_point;
+  }
   
-public:
+protected:
+
+  const TebConfig* cfg_;
+  
+public: 	
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
 };
-
-
+  
